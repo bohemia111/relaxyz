@@ -1,10 +1,11 @@
-export type SoundType = 'forest' | 'ocean' | 'rain' | 'wind';
+export type SoundType = 'forest' | 'ocean' | 'rain' | 'wind' | 'silence';
 
 export const SOUND_OPTIONS: { id: SoundType; name: string; description: string }[] = [
   { id: 'forest', name: 'Forest Floor', description: 'Deep, earthy brown noise.' },
   { id: 'ocean', name: 'Ocean Waves', description: 'Gentle, rolling surf.' },
   { id: 'rain', name: 'Soft Rain', description: 'Light, steady rainfall.' },
   { id: 'wind', name: 'Deep Wind', description: 'Low, resonant mountain breeze.' },
+  { id: 'silence', name: 'Silence', description: 'No background soundscape.' },
 ];
 
 export interface BreathingPhase {

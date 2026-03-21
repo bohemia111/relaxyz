@@ -67,6 +67,13 @@ export default function App() {
     
     const ctx = audioCtxRef.current!;
     
+    if (sound === 'silence') {
+      backgroundNodeRef.current = null;
+      filterRef.current = null;
+      forestGainRef.current = null;
+      return;
+    }
+    
     // Background ambience (synthesized)
     const bufferSize = 20 * ctx.sampleRate;
     const noiseBuffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
@@ -413,6 +420,7 @@ export default function App() {
                     {option.id === 'ocean' && <Waves className="w-4 h-4" />}
                     {option.id === 'rain' && <CloudRain className="w-4 h-4" />}
                     {option.id === 'wind' && <Wind className="w-4 h-4" />}
+                    {option.id === 'silence' && <VolumeX className="w-4 h-4" />}
                     <div className="text-left">
                       <div className="text-sm font-bold">{option.name}</div>
                       <div className="text-[10px] opacity-60">{option.description}</div>
