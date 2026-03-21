@@ -339,16 +339,19 @@ export default function App() {
       <header className="p-6 flex justify-between items-center border-b border-neutral-800">
         <div className="flex items-center gap-2">
           <Wind className="w-8 h-8 text-blue-400" />
-          <h1 className="text-2xl font-display font-bold tracking-tight">RelayRelax</h1>
+          <h1 className="text-2xl font-display font-bold tracking-tight">Relaxyz</h1>
         </div>
         
         <div className="flex items-center gap-4">
           <button 
             onClick={() => setShowSettings(!showSettings)}
-            className={`p-2 rounded-full transition-colors ${showSettings ? 'bg-blue-600 text-white' : 'bg-neutral-900 text-neutral-400 hover:text-white'}`}
-            title="Sound Settings"
+            className={`px-4 py-2 rounded-full border transition-all text-sm font-medium ${
+              showSettings 
+                ? 'bg-blue-600 text-white border-blue-400 shadow-lg shadow-blue-900/20' 
+                : 'bg-neutral-900 text-blue-400 border-blue-600/50 hover:border-blue-400 hover:text-blue-300'
+            }`}
           >
-            <Settings className="w-5 h-5" />
+            Choose your soundscape
           </button>
 
           <button 
@@ -378,7 +381,7 @@ export default function App() {
               className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-full transition-all font-medium text-sm"
             >
               <LogIn className="w-4 h-4" />
-              Login with Amber
+              Login with NIP-07 extension
             </button>
           )}
         </div>
@@ -394,7 +397,7 @@ export default function App() {
               exit={{ opacity: 0, y: -10 }}
               className="absolute top-0 right-6 z-50 w-64 bg-neutral-900 border border-neutral-800 rounded-2xl shadow-2xl p-4 mt-2"
             >
-              <h3 className="text-sm font-bold uppercase tracking-widest text-neutral-500 mb-4">Soundscape</h3>
+              <h3 className="text-sm font-bold uppercase tracking-widest text-neutral-500 mb-4">Choose your soundscape</h3>
               <div className="space-y-2">
                 {SOUND_OPTIONS.map((option) => (
                   <button
