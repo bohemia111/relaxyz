@@ -3,8 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { motion, AnimatePresence } from 'motion/react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { motion, AnimatePresence, useMotionValue, animate } from 'motion/react';
 import { 
   Wind, 
   LogIn, 
@@ -24,7 +24,10 @@ import {
   Waves,
   CloudRain,
   Trees,
-  Settings
+  Settings,
+  Clock,
+  Timer,
+  Download
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { BREATHING_PATTERNS, BreathingPattern, BreathingPhase, SoundType, SOUND_OPTIONS } from './types';
@@ -43,7 +46,87 @@ export default function App() {
   const [isCreating, setIsCreating] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
   const [selectedSound, setSelectedSound] = useState<SoundType>('forest');
-  const [showSettings, setShowSettings] = useState(false);
+  const [goalMinutes, setGoalMinutes] = useState<string>('00');
+  const [goalSeconds, setGoalSeconds] = useState<string>('00');
+  const [timeGoal, setTimeGoal] = useState<number | null>(null); // in seconds
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
+
+  const scale = useMotionValue(0.8);
+
+  const phaseScales = useMemo(() => {
+    if (!selectedPattern) return [];
+    const scales: number[] = [];
+    let lastScale = 0.8;
+    selectedPattern.phases.forEach((phase, i) => {
+      if (phase.name === 'Inhale') {
+        scales[i] = 1.5;
+        lastScale = 1.5;
+      } else if (phase.name === 'Exhale') {
+        scales[i] = 0.8;
+        lastScale = 0.8;
+      } else {
+        scales[i] = lastScale;
+      }
+    });
+    return scales;
+  }, [selectedPattern]);
+
+  const lastPhaseIndexRef = useRef(currentPhaseIndex);
+
+  useEffect(() => {
+    if (!selectedPattern) return;
+    
+    if (!isBreathing) {
+      scale.stop();
+    } else {
+      const target = phaseScales[currentPhaseIndex];
+      const isNewPhase = lastPhaseIndexRef.current !== currentPhaseIndex;
+      const duration = isNewPhase ? selectedPattern.phases[currentPhaseIndex].duration : timeLeftInPhase;
+      
+      animate(scale, target, {
+        duration: duration,
+        ease: "easeInOut"
+      });
+      
+      lastPhaseIndexRef.current = currentPhaseIndex;
+    }
+  }, [currentPhaseIndex, isBreathing, selectedPattern, phaseScales]);
+
+  useEffect(() => {
+    if (!selectedPattern) {
+      scale.stop();
+      scale.set(0.8);
+    }
+  }, [selectedPattern, scale]);
+
+  useEffect(() => {
+    const handleBeforeInstallPrompt = (e: any) => {
+      e.preventDefault();
+      setDeferredPrompt(e);
+    };
+
+    const handleAppInstalled = () => {
+      setDeferredPrompt(null);
+    };
+
+    window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+    window.addEventListener('appinstalled', handleAppInstalled);
+
+    return () => {
+      window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+      window.removeEventListener('appinstalled', handleAppInstalled);
+    };
+  }, []);
+
+  const handleInstallClick = async () => {
+    if (!deferredPrompt) return;
+    deferredPrompt.prompt();
+    const { outcome } = await deferredPrompt.userChoice;
+    if (outcome === 'accepted') {
+      setDeferredPrompt(null);
+    }
+  };
 
   // Audio refs
   const audioCtxRef = useRef<AudioContext | null>(null);
@@ -177,7 +260,8 @@ export default function App() {
 
     if (!isBreathing || isMuted || !selectedPattern) {
       gain.cancelScheduledValues(now);
-      gain.setTargetAtTime(0, now, 0.2);
+      // Use a slightly longer fade out for the pause to prevent pops
+      gain.setTargetAtTime(0, now, 0.1);
       return;
     }
 
@@ -235,7 +319,7 @@ export default function App() {
     ];
     if (newHold > 0) phases.push({ name: 'Hold', duration: newHold, color: 'bg-blue-600' });
     phases.push({ name: 'Exhale', duration: newExhale, color: 'bg-blue-400' });
-    if (newPause > 0) phases.push({ name: 'Pause', duration: newPause, color: 'bg-blue-200' });
+    if (newPause > 0) phases.push({ name: 'Hold', duration: newPause, color: 'bg-blue-200' });
 
     const newPattern: BreathingPattern = {
       id: `custom-${Date.now()}`,
@@ -280,11 +364,19 @@ export default function App() {
     if (audioCtxRef.current?.state === 'suspended') {
       audioCtxRef.current.resume();
     }
+    
+    // Calculate goal from inputs
+    const mins = parseInt(goalMinutes) || 0;
+    const secs = parseInt(goalSeconds) || 0;
+    const totalGoal = mins * 60 + secs;
+    setTimeGoal(totalGoal > 0 ? totalGoal : null);
+    
     setSelectedPattern(pattern);
     setIsBreathing(true);
     setCurrentPhaseIndex(0);
     setTimeLeftInPhase(pattern.phases[0].duration);
     setSessionStartTime(Date.now());
+    setElapsedSeconds(0);
     setIsCompleted(false);
   };
 
@@ -317,6 +409,19 @@ export default function App() {
   useEffect(() => {
     if (isBreathing && selectedPattern) {
       timerRef.current = setInterval(() => {
+        // Update elapsed time
+        if (sessionStartTime) {
+          const now = Date.now();
+          const elapsed = Math.floor((now - sessionStartTime) / 1000);
+          setElapsedSeconds(elapsed);
+          
+          // Check if goal reached
+          if (timeGoal && elapsed >= timeGoal) {
+            handleComplete();
+            return;
+          }
+        }
+
         setTimeLeftInPhase((prev) => {
           if (prev <= 0.1) {
             // Move to next phase
@@ -335,31 +440,40 @@ export default function App() {
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
     };
-  }, [isBreathing, currentPhaseIndex, selectedPattern]);
+  }, [isBreathing, currentPhaseIndex, selectedPattern, sessionStartTime, timeGoal]);
+
+  const formatTime = (seconds: number) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
+  };
 
   const currentPhase = selectedPattern?.phases[currentPhaseIndex];
+  const inhalePhase = selectedPattern?.phases.find(p => p.name === 'Inhale');
+  const exhalePhase = selectedPattern?.phases.find(p => p.name === 'Exhale');
   const allPatterns = [...BREATHING_PATTERNS, ...customPatterns];
 
   return (
     <div className="min-h-screen flex flex-col bg-neutral-950 text-neutral-100 font-sans antialiased">
       {/* Header */}
       <header className="p-6 flex justify-between items-center border-b border-neutral-800">
-        <div className="flex items-center gap-2">
-          <Wind className="w-8 h-8 text-blue-400" />
-          <h1 className="text-2xl font-display font-bold tracking-tight">Relaxyz</h1>
+        <div className="flex flex-col">
+          <div className="flex items-center gap-2">
+            <Wind className="w-8 h-8 text-blue-400" />
+            <h1 className="text-2xl font-display font-bold tracking-tight">Relaxyz</h1>
+          </div>
         </div>
         
         <div className="flex items-center gap-4">
-          <button 
-            onClick={() => setShowSettings(!showSettings)}
-            className={`px-4 py-2 rounded-full border transition-all text-sm font-medium ${
-              showSettings 
-                ? 'bg-blue-600 text-white border-blue-400 shadow-lg shadow-blue-900/20' 
-                : 'bg-neutral-900 text-blue-400 border-blue-600/50 hover:border-blue-400 hover:text-blue-300'
-            }`}
-          >
-            Choose your soundscape
-          </button>
+          {deferredPrompt && (
+            <button 
+              onClick={handleInstallClick}
+              className="px-4 py-2 rounded-full bg-blue-600 text-white border border-blue-400 shadow-lg shadow-blue-900/20 hover:bg-blue-500 transition-all text-sm font-medium flex items-center gap-2"
+            >
+              <Download className="w-4 h-4" />
+              Install App
+            </button>
+          )}
 
           <button 
             onClick={() => setIsMuted(!isMuted)}
@@ -395,43 +509,6 @@ export default function App() {
       </header>
 
       <main className="flex-1 flex flex-col items-center justify-center p-6 max-w-4xl mx-auto w-full relative">
-        {/* Sound Settings Modal */}
-        <AnimatePresence>
-          {showSettings && (
-            <motion.div
-              initial={{ opacity: 0, y: -10 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -10 }}
-              className="absolute top-0 right-6 z-50 w-64 bg-neutral-900 border border-neutral-800 rounded-2xl shadow-2xl p-4 mt-2"
-            >
-              <h3 className="text-sm font-bold uppercase tracking-widest text-neutral-500 mb-4">Choose your soundscape</h3>
-              <div className="space-y-2">
-                {SOUND_OPTIONS.map((option) => (
-                  <button
-                    key={option.id}
-                    onClick={() => changeSound(option.id)}
-                    className={`w-full flex items-center gap-3 p-3 rounded-xl transition-all ${
-                      selectedSound === option.id 
-                        ? 'bg-blue-600 text-white' 
-                        : 'bg-neutral-800 text-neutral-400 hover:bg-neutral-700'
-                    }`}
-                  >
-                    {option.id === 'forest' && <Trees className="w-4 h-4" />}
-                    {option.id === 'ocean' && <Waves className="w-4 h-4" />}
-                    {option.id === 'rain' && <CloudRain className="w-4 h-4" />}
-                    {option.id === 'wind' && <Wind className="w-4 h-4" />}
-                    {option.id === 'silence' && <VolumeX className="w-4 h-4" />}
-                    <div className="text-left">
-                      <div className="text-sm font-bold">{option.name}</div>
-                      <div className="text-[10px] opacity-60">{option.description}</div>
-                    </div>
-                  </button>
-                ))}
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
-
         <AnimatePresence mode="wait">
           {isCreating ? (
             /* Custom Pattern Form */
@@ -443,7 +520,7 @@ export default function App() {
               className="w-full max-w-md bg-neutral-900 border border-neutral-800 p-8 rounded-3xl shadow-2xl"
             >
               <div className="flex justify-between items-center mb-8">
-                <h2 className="text-2xl font-display font-bold">New Exercise</h2>
+                <h2 className="text-2xl font-display font-bold">New Pattern</h2>
                 <button onClick={() => setIsCreating(false)} className="text-neutral-500 hover:text-white">
                   <X className="w-6 h-6" />
                 </button>
@@ -531,13 +608,64 @@ export default function App() {
                 <p className="text-neutral-400 max-w-md mx-auto mb-8">
                   Select a breathing pattern to begin your practice. Connect with your breath and find your center.
                 </p>
-                <button 
-                  onClick={() => setIsCreating(true)}
-                  className="inline-flex items-center gap-2 bg-neutral-900 border border-neutral-800 hover:border-neutral-600 text-white px-6 py-3 rounded-full transition-all font-medium"
-                >
-                  <Plus className="w-5 h-5" />
-                  Create Custom
-                </button>
+                <div className="flex flex-wrap justify-center gap-4 mb-8">
+                  <div className="flex items-center gap-3 bg-neutral-900 border border-neutral-800 px-6 py-3 rounded-full font-medium">
+                    <Volume2 className="w-5 h-5 text-blue-400" />
+                    <span className="text-xs font-bold uppercase tracking-widest text-neutral-500 mr-2">Soundscape</span>
+                    <select 
+                      value={selectedSound}
+                      onChange={(e) => changeSound(e.target.value as SoundType)}
+                      className="bg-transparent focus:outline-none text-white text-center cursor-pointer appearance-none border-b border-neutral-700 focus:border-blue-500 px-1"
+                    >
+                      {SOUND_OPTIONS.map(option => (
+                        <option key={option.id} value={option.id} className="bg-neutral-900">
+                          {option.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <button 
+                    onClick={() => setIsCreating(true)}
+                    className="inline-flex items-center gap-2 bg-neutral-900 border border-neutral-800 hover:border-neutral-600 text-white px-6 py-3 rounded-full transition-all font-medium"
+                  >
+                    <Plus className="w-5 h-5" />
+                    Create Pattern
+                  </button>
+
+                  <div className="flex items-center gap-3 bg-neutral-900 border border-neutral-800 px-6 py-3 rounded-full font-medium">
+                    <Timer className="w-5 h-5 text-blue-400" />
+                    <span className="text-xs font-bold uppercase tracking-widest text-neutral-500 mr-2">Timer</span>
+                    <div className="flex items-center gap-1">
+                      <select 
+                        value={goalMinutes}
+                        onChange={(e) => setGoalMinutes(e.target.value)}
+                        className="bg-transparent focus:outline-none text-white text-center cursor-pointer appearance-none border-b border-neutral-700 focus:border-blue-500 px-1"
+                      >
+                        {Array.from({ length: 61 }, (_, i) => (
+                          <option key={i} value={i.toString().padStart(2, '0')} className="bg-neutral-900">
+                            {i.toString().padStart(2, '0')}
+                          </option>
+                        ))}
+                      </select>
+                      <span className="text-neutral-500 text-xs uppercase font-bold">m</span>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <select 
+                        value={goalSeconds}
+                        onChange={(e) => setGoalSeconds(e.target.value)}
+                        className="bg-transparent focus:outline-none text-white text-center cursor-pointer appearance-none border-b border-neutral-700 focus:border-blue-500 px-1"
+                      >
+                        {Array.from({ length: 60 }, (_, i) => (
+                          <option key={i} value={i.toString().padStart(2, '0')} className="bg-neutral-900">
+                            {i.toString().padStart(2, '0')}
+                          </option>
+                        ))}
+                      </select>
+                      <span className="text-neutral-500 text-xs uppercase font-bold">s</span>
+                    </div>
+                  </div>
+                </div>
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -623,48 +751,63 @@ export default function App() {
             >
               <div className="mb-8 text-center">
                 <h2 className="text-2xl font-display font-bold text-neutral-400">{selectedPattern.name}</h2>
-                <div className="flex gap-2 mt-2">
+                <div className="flex gap-2 mt-2 justify-center">
                   {selectedPattern.phases.map((p, i) => (
-                    <div 
-                      key={i}
-                      className={`h-1.5 w-8 rounded-full transition-all duration-500 ${
-                        i === currentPhaseIndex ? p.color : 'bg-neutral-800'
-                      }`}
-                    />
+                    <div key={i} className="flex flex-col items-center gap-1">
+                      <div 
+                        className={`h-1.5 w-8 rounded-full transition-all duration-500 ${
+                          i === currentPhaseIndex ? p.color : 'bg-neutral-800'
+                        }`}
+                      />
+                      <span className="text-[10px] font-mono text-white">{p.duration}s</span>
+                    </div>
                   ))}
                 </div>
               </div>
 
-              {/* Breathing Visualizer */}
-              <div className="relative w-80 h-80 flex items-center justify-center">
-                {/* Outer Ring */}
-                <div className="absolute inset-0 border-2 border-neutral-800 rounded-full" />
+              {/* Timer Display */}
+              <div className="flex flex-col items-center gap-2 mb-8">
+                <div className="flex items-center gap-4 bg-neutral-900/50 px-6 py-2 rounded-full border border-neutral-800">
+                  <div className="flex items-center gap-2">
+                    <Clock className="w-4 h-4 text-blue-400" />
+                    <span className="text-sm font-mono font-bold">
+                      {timeGoal 
+                        ? formatTime(Math.max(0, timeGoal - elapsedSeconds)) 
+                        : formatTime(elapsedSeconds)}
+                    </span>
+                  </div>
+                </div>
                 
-                {/* Breathing Circle */}
-                <motion.div
-                  animate={{
-                    scale: currentPhase?.name === 'Inhale' ? 1.5 : 
-                           currentPhase?.name === 'Exhale' ? 0.8 : 
-                           currentPhase?.name === 'Hold' ? 1.5 : 0.8,
-                  }}
-                  transition={{
-                    duration: currentPhase?.duration || 1,
-                    ease: "easeInOut"
-                  }}
-                  className={`w-40 h-40 rounded-full shadow-2xl ${currentPhase?.color || 'bg-blue-500'} blur-sm opacity-20`}
+                <div className="flex gap-6 text-[10px] font-bold uppercase tracking-widest text-neutral-500">
+                  <div className="flex items-center gap-2">
+                    <span className="text-neutral-600">Breaths:</span>
+                    <span className="text-white">
+                      {(() => {
+                        const totalBreathDuration = selectedPattern.phases.reduce((acc, p) => acc + p.duration, 0);
+                        return timeGoal ? Math.floor(timeGoal / totalBreathDuration) : "Continuous";
+                      })()}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-neutral-600">BPM:</span>
+                    <span className="text-white">
+                      {(60 / selectedPattern.phases.reduce((acc, p) => acc + p.duration, 0)).toFixed(1)}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Breathing Visualizer */}
+              <div className="relative w-80 h-80 flex items-center justify-center mb-16">
+                {/* Stationary Max Circle (Background) */}
+                <div 
+                  className={`absolute w-60 h-60 rounded-full ${currentPhase?.color || 'bg-blue-600'} opacity-50 z-0 transition-colors duration-500`}
                 />
                 
+                {/* Breathing Circle (Animated) */}
                 <motion.div
-                  animate={{
-                    scale: currentPhase?.name === 'Inhale' ? 1.5 : 
-                           currentPhase?.name === 'Exhale' ? 0.8 : 
-                           currentPhase?.name === 'Hold' ? 1.5 : 0.8,
-                  }}
-                  transition={{
-                    duration: currentPhase?.duration || 1,
-                    ease: "easeInOut"
-                  }}
-                  className={`w-40 h-40 rounded-full flex items-center justify-center z-10 ${currentPhase?.color || 'bg-blue-500'}`}
+                  style={{ scale }}
+                  className={`w-40 h-40 rounded-full flex items-center justify-center z-10 shadow-2xl ${currentPhase?.color || 'bg-blue-500'} transition-colors duration-500`}
                 >
                   <div className="text-center text-white">
                     <div className="text-4xl font-display font-bold leading-none">{Math.ceil(timeLeftInPhase)}</div>
@@ -674,7 +817,7 @@ export default function App() {
               </div>
 
               {/* Controls */}
-              <div className="mt-16 flex items-center gap-8">
+              <div className="flex items-center gap-12">
                 <button 
                   onClick={() => setSelectedPattern(null)}
                   className="p-3 rounded-full bg-neutral-900 text-neutral-400 hover:text-white transition-colors"
@@ -684,12 +827,12 @@ export default function App() {
                 
                 <button 
                   onClick={() => setIsBreathing(!isBreathing)}
-                  className="w-20 h-20 rounded-full bg-white text-black flex items-center justify-center hover:scale-105 transition-transform shadow-xl"
+                  className="w-24 h-24 rounded-full bg-white text-black flex items-center justify-center hover:scale-105 transition-transform shadow-xl"
                 >
                   {isBreathing ? (
-                    <PauseIcon className="w-8 h-8 fill-current" />
+                    <PauseIcon className="w-10 h-10 fill-current" />
                   ) : (
-                    <Play className="w-8 h-8 fill-current ml-1" />
+                    <Play className="w-10 h-10 fill-current ml-1" />
                   )}
                 </button>
 
@@ -707,7 +850,7 @@ export default function App() {
 
       {/* Footer */}
       <footer className="p-8 text-center text-neutral-600 text-xs border-t border-neutral-900">
-        <p>Built for the Nostr ecosystem. Login with Amber or any NIP-07 extension.</p>
+        <p>Built for the Nostr ecosystem. Login with NIP-07 extension.</p>
         <p className="mt-2">Breathwork is a powerful tool for self-regulation. Practice safely.</p>
       </footer>
     </div>

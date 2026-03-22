@@ -18,7 +18,7 @@ export async function loginWithNostr(): Promise<string | null> {
 export async function postSessionToNostr(pubkey: string, sessionData: { pattern: string, duration: number }) {
   if (!window.nostr) return false;
 
-  const content = `🧘‍♂️ Just finished a ${sessionData.duration}s breathwork session using the "${sessionData.pattern}" rhythm on Relaxyz!\n\nTake a moment to breathe. #chillstr`;
+  const content = `🧘‍♂️ Just finished a ${sessionData.duration}s breathwork session using the "${sessionData.pattern}" rhythm on Relaxyz!\n\nTake a moment to breathe: https://www.relaxyz.com\n\n#chillstr`;
 
   const eventTemplate: EventTemplate = {
     kind: 1,

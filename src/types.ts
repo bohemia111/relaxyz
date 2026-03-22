@@ -9,7 +9,7 @@ export const SOUND_OPTIONS: { id: SoundType; name: string; description: string }
 ];
 
 export interface BreathingPhase {
-  name: 'Inhale' | 'Hold' | 'Exhale' | 'Pause';
+  name: 'Inhale' | 'Hold' | 'Exhale';
   duration: number; // in seconds
   color: string;
 }
@@ -19,6 +19,7 @@ export interface BreathingPattern {
   name: string;
   description: string;
   phases: BreathingPhase[];
+  instruction?: string;
 }
 
 export const BREATHING_PATTERNS: BreathingPattern[] = [
@@ -30,7 +31,7 @@ export const BREATHING_PATTERNS: BreathingPattern[] = [
       { name: 'Inhale', duration: 4, color: 'bg-blue-400' },
       { name: 'Hold', duration: 4, color: 'bg-blue-600' },
       { name: 'Exhale', duration: 4, color: 'bg-blue-400' },
-      { name: 'Pause', duration: 4, color: 'bg-blue-200' },
+      { name: 'Hold', duration: 4, color: 'bg-blue-200' },
     ],
   },
   {
@@ -51,18 +52,38 @@ export const BREATHING_PATTERNS: BreathingPattern[] = [
       { name: 'Inhale', duration: 4.5, color: 'bg-indigo-400' },
       { name: 'Hold', duration: 0.5, color: 'bg-indigo-600' },
       { name: 'Exhale', duration: 6.5, color: 'bg-indigo-400' },
-      { name: 'Pause', duration: 0.5, color: 'bg-indigo-200' },
+      { name: 'Hold', duration: 0.5, color: 'bg-indigo-200' },
+    ],
+  },
+  {
+    id: 'heart-coherence',
+    name: 'Heart Coherence',
+    description: 'Focus on your heart space and the feeling of gratitude.',
+    instruction: 'Focus on your heart space and the feeling of gratitude.',
+    phases: [
+      { name: 'Inhale', duration: 5, color: 'bg-pink-400' },
+      { name: 'Exhale', duration: 5, color: 'bg-pink-400' },
     ],
   },
   {
     id: 'power',
-    name: 'Power Breath',
+    name: 'Wake Up',
     description: 'Energize your body and mind.',
     phases: [
       { name: 'Inhale', duration: 4, color: 'bg-orange-400' },
       { name: 'Hold', duration: 4, color: 'bg-orange-600' },
       { name: 'Exhale', duration: 2, color: 'bg-orange-400' },
-      { name: 'Pause', duration: 1, color: 'bg-orange-200' },
+      { name: 'Hold', duration: 1, color: 'bg-orange-200' },
+    ],
+  },
+  {
+    id: 'stamina',
+    name: 'Stamina',
+    description: 'Build lung capacity and endurance.',
+    phases: [
+      { name: 'Inhale', duration: 6, color: 'bg-red-400' },
+      { name: 'Hold', duration: 12, color: 'bg-red-600' },
+      { name: 'Exhale', duration: 6, color: 'bg-red-400' },
     ],
   },
 ];
