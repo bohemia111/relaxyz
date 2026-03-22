@@ -18,12 +18,17 @@ export async function loginWithNostr(): Promise<string | null> {
 export async function postSessionToNostr(pubkey: string, sessionData: { pattern: string, duration: number }) {
   if (!window.nostr) return false;
 
-  const content = `🧘‍♂️ Just finished a ${sessionData.duration}s breathwork session using the "${sessionData.pattern}" rhythm on Relaxyz!\n\nTake a moment to breathe: https://www.relaxyz.com\n\n#chillstr`;
+  const mins = Math.floor(sessionData.duration / 60);
+  const secs = sessionData.duration % 60;
+  const durationStr = mins > 0 ? `${mins} min ${secs} sec` : `${secs} sec`;
+
+  const content = `🧘‍♂️ Just finished a ${durationStr} breathwork session using the "${sessionData.pattern}" rhythm on Relaxyz!\n\nTake a moment to breathe freely: https://www.relaxyz.com\n\n#breathwork #chillstr`;
 
   const eventTemplate: EventTemplate = {
     kind: 1,
     created_at: Math.floor(Date.now() / 1000),
     tags: [
+      ['t', 'breathwork'],
       ['t', 'chillstr'],
       ['p', pubkey]
     ],
