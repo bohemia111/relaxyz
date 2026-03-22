@@ -1,6 +1,6 @@
 **Relaxyz - a breathwork timer, built on Nostr. Breathe freely.**
 
-!(screenshots/relaxyz.jpg)
+![appscreenshot](screenshots/relaxyz.jpg)
 
 **What is Relaxyz?**  
 
