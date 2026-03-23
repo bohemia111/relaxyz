@@ -1,20 +1,19 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
-</div>
+**Relaxyz** is a paced breathing app, built for the Nostr protocol. Use a NIP-07 extension, such as nos2x, to login. 
 
-# Run and deploy your AI Studio app
+**Features**
+_Guided breathing_ - Choose from six preset patterns: Box Breathing, 4-7-8, Calm, Heart Coherence, Wake Up, and Stamina. Create a custom pattern choosing lengths of time for inhale, hold, exhale, and hold. 
 
-This contains everything you need to run your app locally.
+_Visual guidance_ - Follow along with an animated "breathing circle" that mimics your lungs expanding and contracting to help guide your pace.
 
-View your app in AI Studio: https://ai.studio/apps/28bbde74-d303-4a43-91e6-d448c041f65d
+_Audio cues_ - Choose from four soundscapes - so you can close your eyes and focus on only your breath - or choose silence. 
 
-## Run Locally
+_Progress tracking_ - Use the interactive calendar with smart timeframes to see your activity on day, week, month, or year intervals. Stay motivated with your current and best streak counters.
 
-**Prerequisites:**  Node.js
+_Nostr integration_ - Use your nostr npub along with a NIP-07 browser extension for a seamless, password-less, private experience. All session data is stored locally, and broadcast to the Nostr network only with your permission.
 
-
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+**How to Use**
+Select or create a pattern.
+Select a soundscape.
+Set a timer.
+Breathe freely.
+Share.
