@@ -1,6 +1,6 @@
 **Relaxyz** is a paced breathing app, built for the Nostr protocol. Use a NIP-07 extension, such as nos2x, to login. 
 
-**Features**
+**Features**<br>
 _Guided breathing_ - Choose from six preset patterns: Box Breathing, 4-7-8, Calm, Heart Coherence, Wake Up, and Stamina. Create a custom pattern choosing lengths of time for inhale, hold, exhale, and hold. 
 
 _Visual guidance_ - Follow along with an animated "breathing circle" that mimics your lungs expanding and contracting to help guide your pace.
