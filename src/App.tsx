@@ -13,6 +13,7 @@ import {
   Pause as PauseIcon, 
   RotateCcw, 
   ChevronRight, 
+  ChevronLeft,
   CheckCircle2, 
   Share2, 
   User, 
@@ -26,10 +27,24 @@ import {
   Trees,
   Settings,
   Clock,
-  Timer
+  Timer,
+  TrendingUp,
+  Award,
+  Calendar,
+  BarChart2
 } from 'lucide-react';
+import { 
+  BarChart, 
+  Bar, 
+  XAxis, 
+  YAxis, 
+  CartesianGrid, 
+  Tooltip, 
+  ResponsiveContainer, 
+  Cell 
+} from 'recharts';
 import confetti from 'canvas-confetti';
-import { BREATHING_PATTERNS, BreathingPattern, BreathingPhase, SoundType, SOUND_OPTIONS } from './types';
+import { BREATHING_PATTERNS, BreathingPattern, BreathingPhase, SoundType, SOUND_OPTIONS, Session } from './types';
 import { loginWithNostr, postSessionToNostr } from './nostr';
 
 export default function App() {
@@ -49,8 +64,158 @@ export default function App() {
   const [goalSeconds, setGoalSeconds] = useState<string>('00');
   const [timeGoal, setTimeGoal] = useState<number | null>(null); // in seconds
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const [sessions, setSessions] = useState<Session[]>(() => {
+    const saved = localStorage.getItem('relaxyz_sessions');
+    const parsed = saved ? JSON.parse(saved) : [];
+    return parsed.filter((s: Session) => s.timestamp >= new Date('2026-03-20').getTime());
+  });
+  const [showProgress, setShowProgress] = useState(false);
+  const [activityTimeframe, setActivityTimeframe] = useState<'day' | 'week' | 'month' | 'year' | 'all'>('week');
+  const [referenceDate, setReferenceDate] = useState(new Date());
+  const [hoveredTimeframe, setHoveredTimeframe] = useState<'day' | 'week' | 'month' | 'year' | 'all' | null>(null);
+  const [calendarViewDate, setCalendarViewDate] = useState(new Date());
+
+  const SITE_START_DATE = useMemo(() => new Date('2026-03-20'), []);
 
   const scale = useMotionValue(0.8);
+
+  useEffect(() => {
+    localStorage.setItem('relaxyz_sessions', JSON.stringify(sessions));
+  }, [sessions]);
+
+  const { currentStreak, bestStreak } = useMemo(() => {
+    if (sessions.length === 0) return { currentStreak: 0, bestStreak: 0 };
+    
+    const dates = Array.from(new Set(sessions.map(s => new Date(s.timestamp).toDateString())))
+      .map((d: string) => new Date(d).getTime())
+      .sort((a, b) => b - a);
+    
+    let current = 0;
+    const today = new Date().toDateString();
+    const yesterday = new Date(Date.now() - 86400000).toDateString();
+    
+    const hasToday = sessions.some(s => new Date(s.timestamp).toDateString() === today);
+    const hasYesterday = sessions.some(s => new Date(s.timestamp).toDateString() === yesterday);
+    
+    if (!hasToday && !hasYesterday) {
+      current = 0;
+    } else {
+      let lastDate = hasToday ? new Date(today).getTime() : new Date(yesterday).getTime();
+      current = 1;
+      
+      for (let i = dates.indexOf(lastDate) + 1; i < dates.length; i++) {
+        if (lastDate - dates[i] === 86400000) {
+          current++;
+          lastDate = dates[i];
+        } else {
+          break;
+        }
+      }
+    }
+    
+    // Best streak
+    let best = 0;
+    let temp = 1;
+    const sortedDates = [...dates].sort((a, b) => a - b);
+    for (let i = 1; i < sortedDates.length; i++) {
+      if (sortedDates[i] - sortedDates[i-1] === 86400000) {
+        temp++;
+      } else {
+        best = Math.max(best, temp);
+        temp = 1;
+      }
+    }
+    best = Math.max(best, temp);
+    
+    return { currentStreak: current, bestStreak: best };
+  }, [sessions]);
+
+  const chartData = useMemo(() => {
+    const ref = new Date(referenceDate);
+    const data: { name: string; value: number }[] = [];
+    
+    if (activityTimeframe === 'day') {
+      // Start of the selected day
+      const startOfDay = new Date(ref);
+      startOfDay.setHours(0, 0, 0, 0);
+      
+      for (let i = 0; i < 24; i++) {
+        const hourStart = new Date(startOfDay);
+        hourStart.setHours(i);
+        const hourEnd = new Date(hourStart);
+        hourEnd.setHours(i + 1);
+        
+        const hour = i % 12 || 12;
+        const ampm = i < 12 ? 'a' : 'p';
+        const label = `${hour}${ampm}`;
+        const value = sessions
+          .filter(s => s.timestamp >= hourStart.getTime() && s.timestamp < hourEnd.getTime())
+          .reduce((acc, s) => acc + s.duration, 0);
+        data.push({ name: label, value: Math.round(value / 60) });
+      }
+    } else if (activityTimeframe === 'week') {
+      // 7 days ending at referenceDate
+      const start = new Date(ref);
+      start.setDate(ref.getDate() - 6);
+      start.setHours(0, 0, 0, 0);
+      
+      for (let i = 0; i < 7; i++) {
+        const day = new Date(start);
+        day.setDate(start.getDate() + i);
+        const label = day.toLocaleDateString('en-US', { weekday: 'short', month: 'numeric', day: 'numeric' });
+        const value = sessions
+          .filter(s => new Date(s.timestamp).toDateString() === day.toDateString())
+          .reduce((acc, s) => acc + s.duration, 0);
+        data.push({ name: label, value: Math.round(value / 60) });
+      }
+    } else if (activityTimeframe === 'month') {
+      // All days in the selected month
+      const startOfMonth = new Date(ref.getFullYear(), ref.getMonth(), 1);
+      const endOfMonth = new Date(ref.getFullYear(), ref.getMonth() + 1, 0);
+      
+      for (let i = 1; i <= endOfMonth.getDate(); i++) {
+        const day = new Date(ref.getFullYear(), ref.getMonth(), i);
+        const label = i.toString();
+        const value = sessions
+          .filter(s => new Date(s.timestamp).toDateString() === day.toDateString())
+          .reduce((acc, s) => acc + s.duration, 0);
+        data.push({ name: label, value: Math.round(value / 60) });
+      }
+    } else if (activityTimeframe === 'year') {
+      // All months in the selected year
+      for (let i = 0; i < 12; i++) {
+        const label = new Date(ref.getFullYear(), i).toLocaleDateString('en-US', { month: 'short' });
+        const value = sessions
+          .filter(s => {
+            const sd = new Date(s.timestamp);
+            return sd.getMonth() === i && sd.getFullYear() === ref.getFullYear();
+          })
+          .reduce((acc, s) => acc + s.duration, 0);
+        data.push({ name: label, value: Math.round(value / 60) });
+      }
+    } else {
+      if (sessions.length === 0) return [];
+      const firstSession = Math.min(...sessions.map(s => s.timestamp));
+      const start = new Date(Math.max(firstSession, SITE_START_DATE.getTime()));
+      start.setDate(1);
+      const end = new Date();
+      
+      let curr = new Date(start);
+      while (curr <= end) {
+        const label = curr.toLocaleDateString('en-US', { month: 'short', year: '2-digit' });
+        const value = sessions
+          .filter(s => {
+            const sd = new Date(s.timestamp);
+            return sd.getMonth() === curr.getMonth() && sd.getFullYear() === curr.getFullYear();
+          })
+          .reduce((acc, s) => acc + s.duration, 0);
+        data.push({ name: label, value: Math.round(value / 60) });
+        curr.setMonth(curr.getMonth() + 1);
+      }
+    }
+    
+    return data;
+  }, [sessions, activityTimeframe, referenceDate, SITE_START_DATE]);
 
   const phaseScales = useMemo(() => {
     if (!selectedPattern) return [];
@@ -353,6 +518,19 @@ export default function App() {
   const handleComplete = () => {
     setIsBreathing(false);
     setIsCompleted(true);
+    
+    // Save session
+    if (selectedPattern && sessionStartTime) {
+      const duration = Math.floor((Date.now() - sessionStartTime) / 1000);
+      const newSession: Session = {
+        id: crypto.randomUUID(),
+        timestamp: Date.now(),
+        duration,
+        pattern: selectedPattern.name
+      };
+      setSessions(prev => [...prev, newSession]);
+    }
+
     confetti({
       particleCount: 100,
       spread: 70,
@@ -436,6 +614,14 @@ export default function App() {
         
         <div className="flex items-center gap-4">
           <button 
+            onClick={() => setShowProgress(true)}
+            className="flex items-center gap-2 bg-neutral-900 hover:bg-neutral-800 text-neutral-300 px-4 py-2 rounded-full border border-neutral-800 transition-all text-sm font-medium"
+          >
+            <TrendingUp className="w-4 h-4 text-emerald-400" />
+            My Progress
+          </button>
+
+          <button 
             onClick={() => setIsMuted(!isMuted)}
             className="p-2 rounded-full bg-neutral-900 text-neutral-400 hover:text-white transition-colors"
             title={isMuted ? "Unmute" : "Mute"}
@@ -470,7 +656,354 @@ export default function App() {
 
       <main className="flex-1 flex flex-col items-center justify-center p-6 max-w-4xl mx-auto w-full relative">
         <AnimatePresence mode="wait">
-          {isCreating ? (
+          {showProgress ? (
+            /* Progress View */
+            <motion.div
+              key="progress"
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 20 }}
+              className="w-full max-w-2xl bg-neutral-900 border border-neutral-800 p-8 rounded-3xl shadow-2xl overflow-y-auto max-h-[80vh]"
+            >
+              <div className="flex justify-between items-center mb-8">
+                <div className="flex items-center gap-3">
+                  <div className="p-2 rounded-xl bg-emerald-500/10">
+                    <TrendingUp className="w-6 h-6 text-emerald-400" />
+                  </div>
+                  <h2 className="text-2xl font-display font-bold">My Progress</h2>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button 
+                    onClick={() => setShowProgress(false)}
+                    className="p-2 rounded-full hover:bg-neutral-800 text-neutral-400 transition-colors"
+                  >
+                    <X className="w-6 h-6" />
+                  </button>
+                </div>
+              </div>
+
+              {/* Streak Cards */}
+              <div className="grid grid-cols-2 gap-4 mb-8">
+                <div className="bg-neutral-800/50 p-6 rounded-2xl border border-neutral-700/50 flex flex-col items-center text-center">
+                  <Award className="w-8 h-8 text-orange-400 mb-2" />
+                  <span className="text-3xl font-display font-bold text-white">{currentStreak}</span>
+                  <span className="text-xs uppercase tracking-widest text-neutral-500 font-bold">Current Streak</span>
+                </div>
+                <div className="bg-neutral-800/50 p-6 rounded-2xl border border-neutral-700/50 flex flex-col items-center text-center">
+                  <CheckCircle2 className="w-8 h-8 text-emerald-400 mb-2" />
+                  <span className="text-3xl font-display font-bold text-white">{bestStreak}</span>
+                  <span className="text-xs uppercase tracking-widest text-neutral-500 font-bold">Best Streak</span>
+                </div>
+              </div>
+
+              {/* Activity Section */}
+              <div className="bg-neutral-800/30 p-6 rounded-2xl border border-neutral-700/50">
+                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
+                  <div>
+                    <h3 className="text-sm font-bold uppercase tracking-widest text-neutral-400">Activity</h3>
+                    <p className="text-[10px] text-neutral-500 mt-1">
+                      {activityTimeframe === 'day' && referenceDate.toLocaleDateString()}
+                      {activityTimeframe === 'week' && `${new Date(referenceDate.getTime() - 6 * 86400000).toLocaleDateString()} - ${referenceDate.toLocaleDateString()}`}
+                      {activityTimeframe === 'month' && referenceDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
+                      {activityTimeframe === 'year' && referenceDate.getFullYear()}
+                      {activityTimeframe === 'all' && 'All Time'}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="flex bg-neutral-900 p-1 rounded-lg border border-neutral-800 relative">
+                      {(['day', 'week', 'month', 'year', 'all'] as const).map((t) => (
+                        <div 
+                          key={t} 
+                          className="relative"
+                          onMouseEnter={() => {
+                            setHoveredTimeframe(t);
+                            if (t === 'day') setCalendarViewDate(new Date(referenceDate));
+                          }}
+                          onMouseLeave={() => setHoveredTimeframe(null)}
+                        >
+                          <button
+                            onClick={() => {
+                              setActivityTimeframe(t);
+                              setReferenceDate(new Date());
+                            }}
+                            className={`px-3 py-1 text-[10px] font-bold uppercase tracking-wider rounded-md transition-all ${
+                              activityTimeframe === t 
+                                ? 'bg-neutral-800 text-white' 
+                                : 'text-neutral-500 hover:text-neutral-300'
+                            }`}
+                          >
+                            {t}
+                          </button>
+
+                          {/* Hover Popover */}
+                          <AnimatePresence>
+                            {hoveredTimeframe === t && t !== 'all' && (
+                              <motion.div
+                                initial={{ opacity: 0, y: 10 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                exit={{ opacity: 0, y: 10 }}
+                                className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 z-50 bg-neutral-900 border border-neutral-800 p-3 rounded-xl shadow-2xl min-w-[160px]"
+                              >
+                              <div className="flex items-center justify-between mb-2">
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    const newDate = new Date(referenceDate);
+                                    if (t === 'day') newDate.setDate(newDate.getDate() - 1);
+                                    else if (t === 'week') newDate.setDate(newDate.getDate() - 7);
+                                    else if (t === 'month') newDate.setMonth(newDate.getMonth() - 1);
+                                    else if (t === 'year') newDate.setFullYear(newDate.getFullYear() - 1);
+                                    
+                                    if (newDate >= SITE_START_DATE) {
+                                      setReferenceDate(newDate);
+                                      setActivityTimeframe(t);
+                                    }
+                                  }}
+                                  disabled={referenceDate <= SITE_START_DATE}
+                                  className="p-1 rounded hover:bg-neutral-800 text-neutral-500 hover:text-white disabled:opacity-20"
+                                >
+                                  <ChevronLeft className="w-3 h-3" />
+                                </button>
+                                <div className="text-[10px] font-bold uppercase tracking-widest text-neutral-500 text-center">
+                                  Select {t}
+                                </div>
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    const newDate = new Date(referenceDate);
+                                    if (t === 'day') newDate.setDate(newDate.getDate() + 1);
+                                    else if (t === 'week') newDate.setDate(newDate.getDate() + 7);
+                                    else if (t === 'month') newDate.setMonth(newDate.getMonth() + 1);
+                                    else if (t === 'year') newDate.setFullYear(newDate.getFullYear() + 1);
+                                    
+                                    if (newDate <= new Date()) {
+                                      setReferenceDate(newDate);
+                                      setActivityTimeframe(t);
+                                    }
+                                  }}
+                                  disabled={referenceDate >= new Date()}
+                                  className="p-1 rounded hover:bg-neutral-800 text-neutral-500 hover:text-white disabled:opacity-20"
+                                >
+                                  <ChevronRight className="w-3 h-3" />
+                                </button>
+                              </div>
+                                
+                                {t === 'day' && (
+                                  <div className="flex flex-col gap-2">
+                                    <div className="flex items-center justify-between px-1">
+                                      <button
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          const d = new Date(calendarViewDate);
+                                          d.setMonth(d.getMonth() - 1);
+                                          setCalendarViewDate(d);
+                                        }}
+                                        className="p-1 rounded hover:bg-neutral-800 text-neutral-500 hover:text-white"
+                                      >
+                                        <ChevronLeft className="w-3 h-3" />
+                                      </button>
+                                      <div className="text-[10px] font-bold text-neutral-400">
+                                        {calendarViewDate.toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}
+                                      </div>
+                                      <button
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          const d = new Date(calendarViewDate);
+                                          d.setMonth(d.getMonth() + 1);
+                                          setCalendarViewDate(d);
+                                        }}
+                                        className="p-1 rounded hover:bg-neutral-800 text-neutral-500 hover:text-white"
+                                      >
+                                        <ChevronRight className="w-3 h-3" />
+                                      </button>
+                                    </div>
+                                    <div className="grid grid-cols-7 gap-1">
+                                      {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map(d => (
+                                        <div key={d} className="text-[8px] text-center text-neutral-600 font-bold">{d}</div>
+                                      ))}
+                                      {(() => {
+                                        const year = calendarViewDate.getFullYear();
+                                        const month = calendarViewDate.getMonth();
+                                        const firstDay = new Date(year, month, 1).getDay();
+                                        const daysInMonth = new Date(year, month + 1, 0).getDate();
+                                        const days = [];
+                                        for (let i = 0; i < firstDay; i++) days.push(<div key={`pad-${i}`} />);
+                                        for (let i = 1; i <= daysInMonth; i++) {
+                                          const d = new Date(year, month, i);
+                                          const isSelected = d.toDateString() === referenceDate.toDateString();
+                                          const isToday = d.toDateString() === new Date().toDateString();
+                                          const isDisabled = d < SITE_START_DATE || d > new Date();
+                                          days.push(
+                                            <button
+                                              key={i}
+                                              disabled={isDisabled}
+                                              onClick={(e) => {
+                                                e.stopPropagation();
+                                                setReferenceDate(d);
+                                                setActivityTimeframe('day');
+                                              }}
+                                              className={`w-5 h-5 flex items-center justify-center text-[9px] rounded-md transition-all ${
+                                                isSelected 
+                                                  ? 'bg-blue-500 text-white font-bold' 
+                                                  : isToday
+                                                    ? 'bg-neutral-800 text-blue-400 font-bold'
+                                                    : 'text-neutral-400 hover:bg-neutral-800 hover:text-white'
+                                              } ${isDisabled ? 'opacity-10 cursor-not-allowed' : ''}`}
+                                            >
+                                              {i}
+                                            </button>
+                                          );
+                                        }
+                                        return days;
+                                      })()}
+                                    </div>
+                                  </div>
+                                )}
+
+                                {t === 'week' && (
+                                  <div className="flex flex-col gap-1 max-h-40 overflow-y-auto pr-1 custom-scrollbar">
+                                    {Array.from({ length: 12 }, (_, i) => {
+                                      const end = new Date();
+                                      end.setDate(end.getDate() - (i * 7));
+                                      const start = new Date(end);
+                                      start.setDate(end.getDate() - 6);
+                                      
+                                      if (end < SITE_START_DATE && i > 0) return null;
+                                      return (
+                                        <button
+                                          key={i}
+                                          onClick={() => {
+                                            setReferenceDate(end);
+                                            setActivityTimeframe('week');
+                                          }}
+                                          className="text-[10px] text-left px-2 py-1.5 rounded hover:bg-neutral-800 text-neutral-400 hover:text-white transition-colors"
+                                        >
+                                          {start.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} - {end.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+                                        </button>
+                                      );
+                                    })}
+                                  </div>
+                                )}
+
+                                {t === 'month' && (
+                                  <div className="grid grid-cols-2 gap-1">
+                                    {Array.from({ length: 12 }, (_, i) => {
+                                      const d = new Date();
+                                      d.setMonth(d.getMonth() - i);
+                                      d.setDate(1);
+                                      if (d < new Date(SITE_START_DATE.getFullYear(), SITE_START_DATE.getMonth(), 1)) return null;
+                                      return (
+                                        <button
+                                          key={i}
+                                          onClick={() => {
+                                            setReferenceDate(d);
+                                            setActivityTimeframe('month');
+                                          }}
+                                          className="text-[10px] px-2 py-1.5 rounded hover:bg-neutral-800 text-neutral-400 hover:text-white transition-colors"
+                                        >
+                                          {d.toLocaleDateString('en-US', { month: 'short', year: '2-digit' })}
+                                        </button>
+                                      );
+                                    })}
+                                  </div>
+                                )}
+
+                                {t === 'year' && (
+                                  <div className="flex flex-col gap-1">
+                                    {Array.from({ length: 5 }, (_, i) => {
+                                      const year = new Date().getFullYear() - i;
+                                      if (year < SITE_START_DATE.getFullYear()) return null;
+                                      return (
+                                        <button
+                                          key={i}
+                                          onClick={() => {
+                                            const d = new Date();
+                                            d.setFullYear(year);
+                                            setReferenceDate(d);
+                                            setActivityTimeframe('year');
+                                          }}
+                                          className="text-[10px] px-2 py-1.5 rounded hover:bg-neutral-800 text-neutral-400 hover:text-white transition-colors"
+                                        >
+                                          {year}
+                                        </button>
+                                      );
+                                    })}
+                                  </div>
+                                )}
+                              </motion.div>
+                            )}
+                          </AnimatePresence>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="h-64 w-full">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={chartData}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#262626" vertical={false} />
+                      <XAxis 
+                        dataKey="name" 
+                        stroke="#525252" 
+                        fontSize={10} 
+                        tickLine={false} 
+                        axisLine={false}
+                        interval={activityTimeframe === 'day' ? 5 : (activityTimeframe === 'month' ? 4 : 0)}
+                      />
+                      <YAxis 
+                        stroke="#525252" 
+                        fontSize={10} 
+                        tickLine={false} 
+                        axisLine={false}
+                        tickFormatter={(v) => `${v}m`}
+                      />
+                      <Tooltip 
+                        contentStyle={{ backgroundColor: '#171717', border: '1px solid #262626', borderRadius: '8px', fontSize: '12px' }}
+                        itemStyle={{ color: '#60a5fa' }}
+                        cursor={{ fill: '#262626' }}
+                      />
+                      <Bar dataKey="value" radius={[4, 4, 0, 0]}>
+                        {chartData.map((entry, index) => (
+                          <Cell key={`cell-${index}`} fill={entry.value > 0 ? '#60a5fa' : '#262626'} />
+                        ))}
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+
+              {/* Recent Sessions */}
+              <div className="mt-8">
+                <h3 className="text-sm font-bold uppercase tracking-widest text-neutral-400 mb-4">Recent Sessions</h3>
+                <div className="space-y-3">
+                  {sessions.slice(-20).reverse().map((s) => (
+                    <div key={s.id} className="flex justify-between items-center p-4 bg-neutral-800/20 rounded-xl border border-neutral-800/50">
+                      <div className="flex items-center gap-3">
+                        <div className="p-2 rounded-lg bg-blue-500/10">
+                          <Wind className="w-4 h-4 text-blue-400" />
+                        </div>
+                        <div>
+                          <div className="text-sm font-medium text-white">{s.pattern}</div>
+                          <div className="text-[10px] text-neutral-500">
+                            {new Date(s.timestamp).toLocaleDateString()} at {new Date(s.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                          </div>
+                        </div>
+                      </div>
+                      <div className="text-sm font-mono text-neutral-400">
+                        {Math.floor(s.duration / 60)}m {s.duration % 60}s
+                      </div>
+                    </div>
+                  ))}
+                  {sessions.length === 0 && (
+                    <div className="text-center py-8 text-neutral-600 italic text-sm">
+                      No sessions recorded yet. Start breathing!
+                    </div>
+                  )}
+                </div>
+              </div>
+            </motion.div>
+          ) : isCreating ? (
             /* Custom Pattern Form */
             <motion.div
               key="creating"

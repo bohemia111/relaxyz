@@ -22,6 +22,13 @@ export interface BreathingPattern {
   instruction?: string;
 }
 
+export interface Session {
+  id: string;
+  timestamp: number;
+  duration: number;
+  pattern: string;
+}
+
 export const BREATHING_PATTERNS: BreathingPattern[] = [
   {
     id: 'box',
