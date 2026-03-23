@@ -12,9 +12,8 @@ _Progress tracking_ - Use the interactive calendar with smart timeframes to see 
 _Nostr integration_ - Use your nostr npub along with a NIP-07 browser extension for a seamless, password-less, private experience. All session data is stored locally, and broadcast to the Nostr network only with your permission.
 
 **How to Use**<br>
-<br>
-Select or create a pattern.<br>
-Select a soundscape.<br>
-Set a timer.<br>
-Breathe freely.<br>
-Share.<br>
+1) Select or create a pattern.<br>
+2) Select a soundscape.<br>
+3) Set a timer.<br>
+4) Breathe freely.<br>
+5) Share.<br>
