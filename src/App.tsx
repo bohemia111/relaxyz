@@ -26,8 +26,7 @@ import {
   Trees,
   Settings,
   Clock,
-  Timer,
-  Download
+  Timer
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { BREATHING_PATTERNS, BreathingPattern, BreathingPhase, SoundType, SOUND_OPTIONS } from './types';
@@ -50,7 +49,6 @@ export default function App() {
   const [goalSeconds, setGoalSeconds] = useState<string>('00');
   const [timeGoal, setTimeGoal] = useState<number | null>(null); // in seconds
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
-  const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
 
   const scale = useMotionValue(0.8);
 
@@ -99,34 +97,6 @@ export default function App() {
       scale.set(0.8);
     }
   }, [selectedPattern, scale]);
-
-  useEffect(() => {
-    const handleBeforeInstallPrompt = (e: any) => {
-      e.preventDefault();
-      setDeferredPrompt(e);
-    };
-
-    const handleAppInstalled = () => {
-      setDeferredPrompt(null);
-    };
-
-    window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
-    window.addEventListener('appinstalled', handleAppInstalled);
-
-    return () => {
-      window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
-      window.removeEventListener('appinstalled', handleAppInstalled);
-    };
-  }, []);
-
-  const handleInstallClick = async () => {
-    if (!deferredPrompt) return;
-    deferredPrompt.prompt();
-    const { outcome } = await deferredPrompt.userChoice;
-    if (outcome === 'accepted') {
-      setDeferredPrompt(null);
-    }
-  };
 
   // Audio refs
   const audioCtxRef = useRef<AudioContext | null>(null);
@@ -465,16 +435,6 @@ export default function App() {
         </div>
         
         <div className="flex items-center gap-4">
-          {deferredPrompt && (
-            <button 
-              onClick={handleInstallClick}
-              className="px-4 py-2 rounded-full bg-blue-600 text-white border border-blue-400 shadow-lg shadow-blue-900/20 hover:bg-blue-500 transition-all text-sm font-medium flex items-center gap-2"
-            >
-              <Download className="w-4 h-4" />
-              Install App
-            </button>
-          )}
-
           <button 
             onClick={() => setIsMuted(!isMuted)}
             className="p-2 rounded-full bg-neutral-900 text-neutral-400 hover:text-white transition-colors"
@@ -852,6 +812,24 @@ export default function App() {
       <footer className="p-8 text-center text-neutral-600 text-xs border-t border-neutral-900">
         <p>Built for the Nostr ecosystem. Login with NIP-07 extension.</p>
         <p className="mt-2">Breathwork is a powerful tool for self-regulation. Practice safely.</p>
+        <div className="mt-4 flex flex-row justify-center items-center gap-6">
+          <a 
+            href="https://njump.me/nprofile1qqsymsh9wrz5lmurz0arqn6jjaqyfmtvz2z3qpfxqz5msnvr0wqjd7gprdmhxue69uhhg6r9vehhyetnwshxummnw3erztnrdakj7qgcwaehxw309aehqct5d9sj6ctjvdskucfwvdhk6tcpkvxva" 
+            target="_blank" 
+            rel="noopener noreferrer"
+            className="text-neutral-400 underline underline-offset-4 hover:text-white transition-colors"
+          >
+            Vibed by Bohemia
+          </a>
+          <a 
+            href="https://github.com/bohemia111/relaxyz" 
+            target="_blank" 
+            rel="noopener noreferrer"
+            className="text-neutral-400 underline underline-offset-4 hover:text-white transition-colors"
+          >
+            Github
+          </a>
+        </div>
       </footer>
     </div>
   );
