@@ -27,6 +27,20 @@ export interface Session {
   timestamp: number;
   duration: number;
   pattern: string;
+  pubkey?: string;
+}
+
+export interface PublicSession {
+  id: string;
+  timestamp: number;
+  duration: number;
+  pattern: string;
+  pubkey: string;
+}
+
+export interface WeeklyPlan {
+  days: { [key: string]: boolean };
+  dailyGoalMinutes: number;
 }
 
 export const BREATHING_PATTERNS: BreathingPattern[] = [

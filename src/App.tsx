@@ -34,7 +34,9 @@ import {
   BarChart2,
   Trophy,
   TreeDeciduous,
-  Users
+  Users,
+  Zap,
+  Sun
 } from 'lucide-react';
 import { 
   BarChart, 
@@ -47,16 +49,30 @@ import {
   Cell 
 } from 'recharts';
 import confetti from 'canvas-confetti';
-import { BREATHING_PATTERNS, BreathingPattern, BreathingPhase, SoundType, SOUND_OPTIONS, Session } from './types';
+import { BREATHING_PATTERNS, BreathingPattern, BreathingPhase, SoundType, SOUND_OPTIONS, Session, WeeklyPlan, PublicSession } from './types';
 import { loginWithNostr, postSessionToNostr, postPatternToNostr, postAchievementToNostr } from './nostr';
 
 const ACHIEVEMENTS = [
   { id: 'first_breath', name: 'First Breath', description: 'Complete your first session', icon: <Wind className="w-4 h-4" /> },
-  { id: 'tree_grower', name: 'Johnny Appleseed', description: 'Grow a full tree (100% growth)', icon: <TreeDeciduous className="w-4 h-4" /> },
+  { id: 'johnny_appleseed', name: 'Johnny Appleseed', description: 'Grow a full tree (100% growth)', icon: <TreeDeciduous className="w-4 h-4" /> },
   { id: 'early_bird', name: 'Early Bird', description: 'Session before 8 AM', icon: <TrendingUp className="w-4 h-4" /> },
   { id: 'night_owl', name: 'Night Owl', description: 'Session after 10 PM', icon: <TrendingUp className="w-4 h-4" /> },
   { id: 'streak_3', name: 'Consistency King', description: '3-day streak', icon: <Trophy className="w-4 h-4" /> },
   { id: 'streak_10', name: 'Zen Master', description: '10-day streak', icon: <Award className="w-4 h-4" /> },
+  { id: 'streak_30', name: 'Enlightened', description: '30-day streak', icon: <Award className="w-4 h-4" /> },
+  { id: 'deep_diver', name: 'Deep Diver', description: 'Complete a 20+ minute session', icon: <Waves className="w-4 h-4" /> },
+  { id: 'century_club', name: 'Century Club', description: 'Complete 100 total sessions', icon: <Trophy className="w-4 h-4" /> },
+  { id: 'marathon', name: 'Breath Marathon', description: '1 hour of total breathing time', icon: <Timer className="w-4 h-4" /> },
+  { id: 'eternal_breath', name: 'Eternal Breath', description: '10 hours of total breathing time', icon: <Timer className="w-4 h-4" /> },
+  { id: 'week_planner', name: 'Architect of Calm', description: 'Set up a weekly breathing plan', icon: <Calendar className="w-4 h-4" /> },
+  { id: 'pattern_explorer', name: 'Pattern Explorer', description: 'Create 5 custom patterns', icon: <Zap className="w-4 h-4" /> },
+  { id: 'social_breather', name: 'Social Breather', description: 'Share 10 items to Nostr', icon: <Share2 className="w-4 h-4" /> },
+  { id: 'weekend_warrior', name: 'Weekend Warrior', description: 'Session on Sat & Sun', icon: <Sun className="w-4 h-4" /> },
+  { id: 'perfect_week', name: 'Perfect Week', description: 'Session every day of the week', icon: <Calendar className="w-4 h-4" /> },
+  { id: 'early_bird_5', name: 'Morning Ritual', description: '5 sessions before 8 AM', icon: <TrendingUp className="w-4 h-4" /> },
+  { id: 'night_owl_5', name: 'Midnight Zen', description: '5 sessions after 10 PM', icon: <TrendingUp className="w-4 h-4" /> },
+  { id: 'deep_diver_60', name: 'Abyssal Breather', description: 'Complete a 60-minute session', icon: <Waves className="w-4 h-4" /> },
+  { id: 'streak_100', name: 'Immortal', description: '100-day streak', icon: <Award className="w-4 h-4" /> },
 ];
 
 const BreathingVisuals = ({ scale, elapsedSeconds, timeGoal, currentPhase }: { 
@@ -334,6 +350,16 @@ export default function App() {
   const [calendarViewDate, setCalendarViewDate] = useState(new Date());
   const [visualType, setVisualType] = useState<'minimal' | 'cat'>('minimal');
   const [showGoals, setShowGoals] = useState(false);
+  const [weeklyPlan, setWeeklyPlan] = useState<WeeklyPlan>(() => {
+    const saved = localStorage.getItem('relaxyz_weekly_plan');
+    return saved ? JSON.parse(saved) : {
+      days: { 'Mon': false, 'Tue': false, 'Wed': false, 'Thu': false, 'Fri': false, 'Sat': false, 'Sun': false },
+      dailyGoalMinutes: 5
+    };
+  });
+  const [publicSessions, setPublicSessions] = useState<PublicSession[]>([]);
+  const [profileUser, setProfileUser] = useState<string | null>(null);
+  const socketRef = useRef<WebSocket | null>(null);
   const [dailyGoal, setDailyGoal] = useState(() => {
     return parseInt(localStorage.getItem('relaxyz_goal_daily') || '10');
   });
@@ -343,6 +369,14 @@ export default function App() {
   const [showAchievement, setShowAchievement] = useState(false);
   const [hasEarnedTreeAchievement, setHasEarnedTreeAchievement] = useState(() => {
     return localStorage.getItem('relaxyz_achievement_tree') === 'true';
+  });
+  const [earnedAchievements, setEarnedAchievements] = useState<Set<string>>(() => {
+    const saved = localStorage.getItem('relaxyz_achievements');
+    return saved ? new Set(JSON.parse(saved)) : new Set();
+  });
+
+  const [totalShares, setTotalShares] = useState(() => {
+    return parseInt(localStorage.getItem('relaxyz_total_shares') || '0');
   });
 
   const SITE_START_DATE = useMemo(() => new Date('2026-03-20'), []);
@@ -399,23 +433,6 @@ export default function App() {
     
     return { currentStreak: current, bestStreak: best };
   }, [sessions]);
-
-  const earnedAchievements = useMemo(() => {
-    const earned = new Set<string>();
-    if (sessions.length > 0) earned.add('first_breath');
-    if (hasEarnedTreeAchievement) earned.add('tree_grower');
-    
-    const hasEarly = sessions.some(s => new Date(s.timestamp).getHours() < 8);
-    if (hasEarly) earned.add('early_bird');
-    
-    const hasLate = sessions.some(s => new Date(s.timestamp).getHours() >= 22);
-    if (hasLate) earned.add('night_owl');
-    
-    if (currentStreak >= 3) earned.add('streak_3');
-    if (currentStreak >= 10) earned.add('streak_10');
-    
-    return earned;
-  }, [sessions, hasEarnedTreeAchievement, currentStreak]);
 
   const chartData = useMemo(() => {
     const ref = new Date(referenceDate);
@@ -755,6 +772,15 @@ export default function App() {
     localStorage.setItem('nostr-breath-custom', JSON.stringify(updated));
     setIsCreating(false);
     
+    // Check for pattern explorer achievement
+    if (updated.length >= 5 && !earnedAchievements.has('pattern_explorer')) {
+      const newEarned = new Set(earnedAchievements);
+      newEarned.add('pattern_explorer');
+      setEarnedAchievements(newEarned);
+      localStorage.setItem('relaxyz_achievements', JSON.stringify(Array.from(newEarned)));
+      setShowAchievement(true);
+    }
+    
     // Show share prompt
     setLastCreatedPattern(newPattern);
     setShowSharePrompt(true);
@@ -773,6 +799,28 @@ export default function App() {
     setCustomPatterns(updated);
     localStorage.setItem('nostr-breath-custom', JSON.stringify(updated));
   };
+
+  // WebSocket connection
+  useEffect(() => {
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const socket = new WebSocket(`${protocol}//${window.location.host}`);
+    socketRef.current = socket;
+
+    socket.onmessage = (event) => {
+      try {
+        const payload = JSON.parse(event.data);
+        if (payload.type === 'INIT_SESSIONS' || payload.type === 'SESSION_LOG_UPDATE') {
+          setPublicSessions(payload.data);
+        }
+      } catch (e) {
+        console.error('WS Error:', e);
+      }
+    };
+
+    return () => {
+      socket.close();
+    };
+  }, []);
 
   // Handle Login
   const handleLogin = async () => {
@@ -826,14 +874,133 @@ export default function App() {
         id: crypto.randomUUID(),
         timestamp: Date.now(),
         duration,
-        pattern: selectedPattern.name
+        pattern: selectedPattern.name,
+        pubkey: pubkey || undefined
       };
-      setSessions(prev => [...prev, newSession]);
+      
+      const updatedSessions = [...sessions, newSession];
+      setSessions(updatedSessions);
 
-      // Check for first tree achievement
-      if (growth >= 1 && !hasEarnedTreeAchievement) {
-        setHasEarnedTreeAchievement(true);
-        localStorage.setItem('relaxyz_achievement_tree', 'true');
+      // Broadcast to public log
+      if (socketRef.current?.readyState === WebSocket.OPEN) {
+        socketRef.current.send(JSON.stringify({
+          type: 'NEW_SESSION',
+          data: {
+            duration,
+            pattern: selectedPattern.name,
+            pubkey: pubkey || 'Anonymous'
+          }
+        }));
+      }
+
+      // Achievement Logic
+      const newEarned = new Set(earnedAchievements);
+      let earnedAny = false;
+
+      // 1. First Breath
+      if (sessions.length === 0 && !newEarned.has('first_breath')) {
+        newEarned.add('first_breath');
+        earnedAny = true;
+      }
+
+      // 2. Johnny Appleseed (Growth)
+      if (growth >= 1 && !newEarned.has('johnny_appleseed')) {
+        newEarned.add('johnny_appleseed');
+        earnedAny = true;
+      }
+
+      // 3. Time of day
+      const hour = new Date().getHours();
+      if (hour < 8 && !newEarned.has('early_bird')) {
+        newEarned.add('early_bird');
+        earnedAny = true;
+      }
+      const earlySessions = updatedSessions.filter(s => new Date(s.timestamp).getHours() < 8);
+      if (earlySessions.length >= 5 && !newEarned.has('early_bird_5')) {
+        newEarned.add('early_bird_5');
+        earnedAny = true;
+      }
+
+      if (hour >= 22 && !newEarned.has('night_owl')) {
+        newEarned.add('night_owl');
+        earnedAny = true;
+      }
+      const lateSessions = updatedSessions.filter(s => new Date(s.timestamp).getHours() >= 22);
+      if (lateSessions.length >= 5 && !newEarned.has('night_owl_5')) {
+        newEarned.add('night_owl_5');
+        earnedAny = true;
+      }
+
+      // 4. Streaks
+      if (currentStreak >= 3 && !newEarned.has('streak_3')) {
+        newEarned.add('streak_3');
+        earnedAny = true;
+      }
+      if (currentStreak >= 10 && !newEarned.has('streak_10')) {
+        newEarned.add('streak_10');
+        earnedAny = true;
+      }
+      if (currentStreak >= 30 && !newEarned.has('streak_30')) {
+        newEarned.add('streak_30');
+        earnedAny = true;
+      }
+      if (currentStreak >= 100 && !newEarned.has('streak_100')) {
+        newEarned.add('streak_100');
+        earnedAny = true;
+      }
+
+      // 5. Deep Diver (20+ min)
+      if (duration >= 1200 && !newEarned.has('deep_diver')) {
+        newEarned.add('deep_diver');
+        earnedAny = true;
+      }
+      if (duration >= 3600 && !newEarned.has('deep_diver_60')) {
+        newEarned.add('deep_diver_60');
+        earnedAny = true;
+      }
+
+      // 6. Century Club (100 sessions)
+      if (updatedSessions.length >= 100 && !newEarned.has('century_club')) {
+        newEarned.add('century_club');
+        earnedAny = true;
+      }
+
+      // 7. Breath Marathon (1 hour total)
+      const totalTime = updatedSessions.reduce((acc, s) => acc + s.duration, 0);
+      if (totalTime >= 3600 && !newEarned.has('marathon')) {
+        newEarned.add('marathon');
+        earnedAny = true;
+      }
+      if (totalTime >= 36000 && !newEarned.has('eternal_breath')) {
+        newEarned.add('eternal_breath');
+        earnedAny = true;
+      }
+
+      // 8. Weekend Warrior
+      const day = new Date().getDay(); // 0 is Sun, 6 is Sat
+      const hasSat = updatedSessions.some(s => new Date(s.timestamp).getDay() === 6);
+      const hasSun = updatedSessions.some(s => new Date(s.timestamp).getDay() === 0);
+      if (hasSat && hasSun && !newEarned.has('weekend_warrior')) {
+        newEarned.add('weekend_warrior');
+        earnedAny = true;
+      }
+
+      // 9. Perfect Week
+      const last7Days = Array.from({ length: 7 }, (_, i) => {
+        const d = new Date();
+        d.setDate(d.getDate() - i);
+        return d.toDateString();
+      });
+      const sessionsLast7Days = updatedSessions.filter(s => last7Days.includes(new Date(s.timestamp).toDateString()));
+      const uniqueDaysLast7 = new Set(sessionsLast7Days.map(s => new Date(s.timestamp).toDateString()));
+      if (uniqueDaysLast7.size === 7 && !newEarned.has('perfect_week')) {
+        newEarned.add('perfect_week');
+        earnedAny = true;
+      }
+
+      if (earnedAny) {
+        setEarnedAchievements(newEarned);
+        localStorage.setItem('relaxyz_achievements', JSON.stringify(Array.from(newEarned)));
         setShowAchievement(true);
       }
     }
@@ -863,6 +1030,19 @@ export default function App() {
     const success = await postPatternToNostr(currentPubkey, lastCreatedPattern.name);
     setIsPosting(false);
     if (success) {
+      const newShares = totalShares + 1;
+      setTotalShares(newShares);
+      localStorage.setItem('relaxyz_total_shares', newShares.toString());
+      
+      // Check for social breather achievement
+      if (newShares >= 10 && !earnedAchievements.has('social_breather')) {
+        const newEarned = new Set(earnedAchievements);
+        newEarned.add('social_breather');
+        setEarnedAchievements(newEarned);
+        localStorage.setItem('relaxyz_achievements', JSON.stringify(Array.from(newEarned)));
+        setShowAchievement(true);
+      }
+      
       alert('Pattern shared to Nostr!');
       setShowSharePrompt(false);
     }
@@ -878,6 +1058,19 @@ export default function App() {
     });
     setIsPosting(false);
     if (success) {
+      const newShares = totalShares + 1;
+      setTotalShares(newShares);
+      localStorage.setItem('relaxyz_total_shares', newShares.toString());
+      
+      // Check for social breather achievement
+      if (newShares >= 10 && !earnedAchievements.has('social_breather')) {
+        const newEarned = new Set(earnedAchievements);
+        newEarned.add('social_breather');
+        setEarnedAchievements(newEarned);
+        localStorage.setItem('relaxyz_achievements', JSON.stringify(Array.from(newEarned)));
+        setShowAchievement(true);
+      }
+      
       alert('Session shared to Nostr!');
     }
   };
@@ -992,10 +1185,15 @@ export default function App() {
 
           {pubkey ? (
             <div className="flex items-center gap-3 bg-neutral-900 px-4 py-2 rounded-full border border-neutral-800">
-              <User className="w-4 h-4 text-neutral-400" />
-              <span className="text-xs font-mono text-neutral-400">
-                {pubkey.slice(0, 8)}...{pubkey.slice(-4)}
-              </span>
+              <button 
+                onClick={() => setProfileUser(pubkey)}
+                className="flex items-center gap-2 hover:text-blue-400 transition-colors"
+              >
+                <User className="w-4 h-4 text-neutral-400" />
+                <span className="text-xs font-mono text-neutral-400">
+                  {pubkey.slice(0, 8)}...{pubkey.slice(-4)}
+                </span>
+              </button>
               <button 
                 onClick={handleLogout}
                 className="text-neutral-500 hover:text-white transition-colors"
@@ -1015,7 +1213,8 @@ export default function App() {
         </div>
       </header>
 
-      <main className="flex-1 flex flex-col items-center justify-center p-6 max-w-4xl mx-auto w-full relative">
+      <main className="flex-1 flex flex-row items-start justify-center p-6 max-w-6xl mx-auto w-full relative gap-8">
+        <div className="flex-1 flex flex-col items-center">
         <AnimatePresence mode="wait">
           {showProgress ? (
             /* Progress View */
@@ -1887,12 +2086,12 @@ export default function App() {
       <AnimatePresence>
         {showGoals && (
           <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
-            <motion.div
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.95 }}
-              className="w-full max-w-md bg-neutral-900 border border-neutral-800 p-8 rounded-3xl shadow-2xl"
-            >
+              <motion.div
+                initial={{ opacity: 0, scale: 0.95 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.95 }}
+                className="w-full max-w-md bg-neutral-900 border border-neutral-800 p-8 rounded-3xl shadow-2xl max-h-[90vh] overflow-y-auto custom-scrollbar"
+              >
               <div className="flex justify-between items-center mb-8">
                 <h2 className="text-2xl font-display font-bold">Your Goals</h2>
                 <button onClick={() => setShowGoals(false)} className="text-neutral-500 hover:text-white">
@@ -1921,6 +2120,58 @@ export default function App() {
                   <div className="flex justify-between mt-2 text-[10px] font-bold text-neutral-600 uppercase tracking-widest">
                     <span>1 min</span>
                     <span>60 min</span>
+                  </div>
+                </div>
+
+                <div className="bg-neutral-800/50 p-6 rounded-2xl border border-neutral-800">
+                  <h3 className="text-xs font-bold uppercase tracking-widest text-neutral-400 mb-4">Weekly Plan</h3>
+                  <div className="flex justify-between mb-6">
+                    {(['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'] as const).map(day => (
+                      <button
+                        key={day}
+                        onClick={() => {
+                          const newPlan = { ...weeklyPlan, days: { ...weeklyPlan.days, [day]: !weeklyPlan.days[day] } };
+                          setWeeklyPlan(newPlan);
+                          localStorage.setItem('relaxyz_weekly_plan', JSON.stringify(newPlan));
+                          
+                          // Check for week planner achievement
+                          const hasPlan = Object.values(newPlan.days).some(v => v);
+                          if (hasPlan && !earnedAchievements.has('week_planner')) {
+                            const newEarned = new Set(earnedAchievements);
+                            newEarned.add('week_planner');
+                            setEarnedAchievements(newEarned);
+                            localStorage.setItem('relaxyz_achievements', JSON.stringify(Array.from(newEarned)));
+                            setShowAchievement(true);
+                          }
+                        }}
+                        className={`w-9 h-9 rounded-full flex items-center justify-center text-[10px] font-bold transition-all border ${
+                          weeklyPlan.days[day] 
+                            ? 'bg-blue-600 border-blue-500 text-white shadow-lg shadow-blue-500/20' 
+                            : 'bg-neutral-900 border-neutral-800 text-neutral-500 hover:border-neutral-700'
+                        }`}
+                      >
+                        {day[0]}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-[10px] font-bold uppercase tracking-widest text-neutral-500">Daily Target</span>
+                    <select
+                      value={weeklyPlan.dailyGoalMinutes}
+                      onChange={(e) => {
+                        const val = parseInt(e.target.value);
+                        const newPlan = { ...weeklyPlan, dailyGoalMinutes: val };
+                        setWeeklyPlan(newPlan);
+                        localStorage.setItem('relaxyz_weekly_plan', JSON.stringify(newPlan));
+                        setDailyGoal(val);
+                        localStorage.setItem('relaxyz_goal_daily', val.toString());
+                      }}
+                      className="bg-neutral-900 border border-neutral-800 rounded-lg px-3 py-1 text-xs text-white focus:outline-none focus:border-blue-500"
+                    >
+                      {[1, 3, 5, 10, 15, 20, 30, 45, 60].map(m => (
+                        <option key={m} value={m}>{m} min</option>
+                      ))}
+                    </select>
                   </div>
                 </div>
 
@@ -2076,9 +2327,148 @@ export default function App() {
             </motion.div>
           )}
         </AnimatePresence>
+        </div>
+
+        {/* Public Session Log Sidebar */}
+        {!selectedPattern && !showProgress && !isCreating && (
+          <motion.div
+            initial={{ opacity: 0, x: 20 }}
+            animate={{ opacity: 1, x: 0 }}
+            className="hidden lg:flex flex-col w-72 bg-neutral-900 border border-neutral-800 rounded-3xl p-6 h-fit sticky top-6"
+          >
+            <div className="flex items-center gap-2 mb-6">
+              <Users className="w-5 h-5 text-blue-400" />
+              <h3 className="text-sm font-bold uppercase tracking-widest text-neutral-400">Public Log</h3>
+            </div>
+            <div className="space-y-4">
+              {publicSessions.length > 0 ? (
+                publicSessions.map((s) => (
+                  <div key={s.id} className="flex flex-col gap-1 p-3 bg-neutral-800/30 rounded-xl border border-neutral-800/50">
+                    <div className="flex justify-between items-center">
+                      <button 
+                        onClick={() => setProfileUser(s.pubkey)}
+                        className="text-[10px] font-mono text-blue-400 hover:underline truncate max-w-[120px]"
+                      >
+                        {s.pubkey === 'Anonymous' ? 'Anonymous' : `${s.pubkey.slice(0, 6)}...${s.pubkey.slice(-4)}`}
+                      </button>
+                      <span className="text-[9px] text-neutral-600">
+                        {new Date(s.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      </span>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span className="text-[11px] font-medium text-white">{s.pattern}</span>
+                      <span className="text-[10px] text-neutral-500">{Math.floor(s.duration / 60)}m {s.duration % 60}s</span>
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <div className="text-center py-8 text-neutral-600 italic text-xs">
+                  Waiting for sessions...
+                </div>
+              )}
+            </div>
+          </motion.div>
+        )}
       </main>
 
-      {/* Footer */}
+      {/* Profile Modal */}
+      <AnimatePresence>
+        {profileUser && (
+          <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-black/90 backdrop-blur-md">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="w-full max-w-md bg-neutral-900 border border-neutral-800 p-8 rounded-3xl shadow-2xl relative overflow-hidden"
+            >
+              <div className="absolute -top-24 -left-24 w-48 h-48 bg-blue-600/10 blur-[80px]" />
+              
+              <div className="relative z-10">
+                <div className="flex justify-between items-start mb-8">
+                  <div className="flex items-center gap-4">
+                    <div className="w-16 h-16 bg-gradient-to-br from-blue-600 to-indigo-600 rounded-2xl flex items-center justify-center shadow-xl">
+                      <User className="w-8 h-8 text-white" />
+                    </div>
+                    <div>
+                      <h2 className="text-xl font-display font-bold text-white">Breathworker Profile</h2>
+                      <p className="text-xs font-mono text-neutral-500 mt-1">
+                        {profileUser === 'Anonymous' ? 'Anonymous' : `${profileUser.slice(0, 12)}...${profileUser.slice(-8)}`}
+                      </p>
+                    </div>
+                  </div>
+                  <button onClick={() => setProfileUser(null)} className="p-2 rounded-full hover:bg-neutral-800 text-neutral-500 transition-colors">
+                    <X className="w-6 h-6" />
+                  </button>
+                </div>
+
+                {/* Stats Grid */}
+                <div className="grid grid-cols-2 gap-4 mb-8">
+                  <div className="bg-neutral-800/50 p-4 rounded-2xl border border-neutral-800/50">
+                    <div className="flex items-center gap-2 mb-1">
+                      <TrendingUp className="w-3 h-3 text-emerald-400" />
+                      <span className="text-[10px] font-bold uppercase tracking-widest text-neutral-500">Total Time</span>
+                    </div>
+                    <div className="text-2xl font-display font-bold text-white">
+                      {(() => {
+                        // If it's the current user, we have accurate stats
+                        if (profileUser === pubkey) {
+                          const totalSecs = sessions.reduce((acc, s) => acc + s.duration, 0);
+                          return `${Math.floor(totalSecs / 60)}m`;
+                        }
+                        // For others, we might only have the last few sessions from the log
+                        const userSessions = publicSessions.filter(s => s.pubkey === profileUser);
+                        const totalSecs = userSessions.reduce((acc, s) => acc + s.duration, 0);
+                        return `${Math.floor(totalSecs / 60)}m+`;
+                      })()}
+                    </div>
+                  </div>
+                  <div className="bg-neutral-800/50 p-4 rounded-2xl border border-neutral-800/50">
+                    <div className="flex items-center gap-2 mb-1">
+                      <Award className="w-3 h-3 text-orange-400" />
+                      <span className="text-[10px] font-bold uppercase tracking-widest text-neutral-500">Streak</span>
+                    </div>
+                    <div className="text-2xl font-display font-bold text-white">
+                      {profileUser === pubkey ? currentStreak : '?'}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Achievements Preview */}
+                <div className="bg-neutral-800/30 p-6 rounded-2xl border border-neutral-800 mb-8">
+                  <h3 className="text-[10px] font-bold uppercase tracking-widest text-neutral-500 mb-4 flex items-center gap-2">
+                    <Trophy className="w-3 h-3 text-amber-400" />
+                    Achievements
+                  </h3>
+                  <div className="flex flex-wrap gap-2">
+                    {profileUser === pubkey ? (
+                      Array.from(earnedAchievements).map(id => {
+                        const ach = ACHIEVEMENTS.find(a => a.id === id);
+                        return ach ? (
+                          <div key={id} className="p-2 bg-neutral-900 rounded-lg border border-neutral-800 text-amber-400" title={ach.name}>
+                            {ach.icon}
+                          </div>
+                        ) : null;
+                      })
+                    ) : (
+                      <div className="text-[10px] text-neutral-600 italic">Profile data restricted</div>
+                    )}
+                    {profileUser === pubkey && earnedAchievements.size === 0 && (
+                      <div className="text-[10px] text-neutral-600 italic">No achievements yet</div>
+                    )}
+                  </div>
+                </div>
+
+                <button 
+                  onClick={() => setProfileUser(null)}
+                  className="w-full bg-blue-600 hover:bg-blue-500 text-white py-4 rounded-2xl font-bold transition-all shadow-lg shadow-blue-600/20"
+                >
+                  Close Profile
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
       <footer className="p-8 text-center text-neutral-600 text-xs border-t border-neutral-900">
         <div className="flex flex-col items-center gap-6">
           <div className="flex flex-row justify-center items-center gap-6">
