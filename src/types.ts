@@ -27,7 +27,6 @@ export interface Session {
   timestamp: number;
   duration: number;
   pattern: string;
-  isLive?: boolean;
 }
 
 export const BREATHING_PATTERNS: BreathingPattern[] = [

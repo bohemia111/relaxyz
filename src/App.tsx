@@ -52,12 +52,11 @@ import { loginWithNostr, postSessionToNostr, postPatternToNostr, postAchievement
 
 const ACHIEVEMENTS = [
   { id: 'first_breath', name: 'First Breath', description: 'Complete your first session', icon: <Wind className="w-4 h-4" /> },
-  { id: 'tree_grower', name: 'Tree Grower', description: 'Grow a full tree (100% growth)', icon: <TreeDeciduous className="w-4 h-4" /> },
+  { id: 'tree_grower', name: 'Johnny Appleseed', description: 'Grow a full tree (100% growth)', icon: <TreeDeciduous className="w-4 h-4" /> },
   { id: 'early_bird', name: 'Early Bird', description: 'Session before 8 AM', icon: <TrendingUp className="w-4 h-4" /> },
   { id: 'night_owl', name: 'Night Owl', description: 'Session after 10 PM', icon: <TrendingUp className="w-4 h-4" /> },
   { id: 'streak_3', name: 'Consistency King', description: '3-day streak', icon: <Trophy className="w-4 h-4" /> },
   { id: 'streak_10', name: 'Zen Master', description: '10-day streak', icon: <Award className="w-4 h-4" /> },
-  { id: 'live_breather', name: 'Live Breather', description: 'Join a live room', icon: <Users className="w-4 h-4" /> },
 ];
 
 const BreathingVisuals = ({ scale, elapsedSeconds, timeGoal, currentPhase }: { 
@@ -334,22 +333,11 @@ export default function App() {
   const [hoveredTimeframe, setHoveredTimeframe] = useState<'day' | 'week' | 'month' | 'year' | 'all' | null>(null);
   const [calendarViewDate, setCalendarViewDate] = useState(new Date());
   const [visualType, setVisualType] = useState<'minimal' | 'cat'>('minimal');
-  const [isLiveRoom, setIsLiveRoom] = useState(false);
-  const [liveUsers, setLiveUsers] = useState<{ id: string; name: string }[]>([]);
-  const [availableRooms, setAvailableRooms] = useState<{ id: string; name: string; userCount: number; patternId: string }[]>([]);
-  const [showRoomList, setShowRoomList] = useState(false);
-  const [showCreateRoom, setShowCreateRoom] = useState(false);
-  const [newRoomName, setNewRoomName] = useState('');
-  const [newRoomPatternId, setNewRoomPatternId] = useState(BREATHING_PATTERNS[0].id);
-  const [newRoomSoundId, setNewRoomSoundId] = useState<SoundType>('forest');
   const [showGoals, setShowGoals] = useState(false);
   const [dailyGoal, setDailyGoal] = useState(() => {
     return parseInt(localStorage.getItem('relaxyz_goal_daily') || '10');
   });
   
-  const wsRef = useRef<WebSocket | null>(null);
-  const userId = useMemo(() => crypto.randomUUID(), []);
-  const userName = useMemo(() => pubkey ? `Nostr User ${pubkey.slice(0, 8)}` : `Guest ${Math.floor(Math.random() * 1000)}`, [pubkey]);
   const [showSharePrompt, setShowSharePrompt] = useState(false);
   const [lastCreatedPattern, setLastCreatedPattern] = useState<BreathingPattern | null>(null);
   const [showAchievement, setShowAchievement] = useState(false);
@@ -425,8 +413,6 @@ export default function App() {
     
     if (currentStreak >= 3) earned.add('streak_3');
     if (currentStreak >= 10) earned.add('streak_10');
-    
-    if (sessions.some(s => s.isLive)) earned.add('live_breather');
     
     return earned;
   }, [sessions, hasEarnedTreeAchievement, currentStreak]);
@@ -840,8 +826,7 @@ export default function App() {
         id: crypto.randomUUID(),
         timestamp: Date.now(),
         duration,
-        pattern: selectedPattern.name,
-        isLive: isLiveRoom
+        pattern: selectedPattern.name
       };
       setSessions(prev => [...prev, newSession]);
 
@@ -919,65 +904,6 @@ export default function App() {
     }
   };
 
-  // Live Room WebSocket Logic
-  useEffect(() => {
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const ws = new WebSocket(`${protocol}//${window.location.host}`);
-    wsRef.current = ws;
-
-    ws.onmessage = (event) => {
-      const message = JSON.parse(event.data);
-      if (message.type === 'presence') {
-        setLiveUsers(message.users);
-      } else if (message.type === 'room_list') {
-        setAvailableRooms(message.rooms);
-      } else if (message.type === 'room_joined') {
-        const room = message.room;
-        const pattern = BREATHING_PATTERNS.find(p => p.id === room.patternId) || BREATHING_PATTERNS[0];
-        setSelectedPattern(pattern);
-        changeSound(room.soundId as SoundType);
-        setIsBreathing(true);
-        setSessionStartTime(Date.now());
-        setIsLiveRoom(true);
-        setTimeGoal(null);
-        setVisualType('minimal');
-      }
-    };
-
-    return () => {
-      ws.close();
-      wsRef.current = null;
-    };
-  }, [userId, userName]);
-
-  const createLiveRoom = () => {
-    if (wsRef.current && newRoomName.trim()) {
-      wsRef.current.send(JSON.stringify({
-        type: 'create_room',
-        roomId: crypto.randomUUID(),
-        roomName: newRoomName,
-        patternId: newRoomPatternId,
-        soundId: newRoomSoundId,
-        userId,
-        userName
-      }));
-      setShowCreateRoom(false);
-      setNewRoomName('');
-    }
-  };
-
-  const joinLiveRoom = (roomId: string) => {
-    if (wsRef.current) {
-      wsRef.current.send(JSON.stringify({
-        type: 'join',
-        roomId,
-        userId,
-        userName
-      }));
-      setShowRoomList(false);
-    }
-  };
-
   // Timer Logic
   useEffect(() => {
     if (isBreathing && selectedPattern) {
@@ -1032,13 +958,14 @@ export default function App() {
       <header className="p-6 flex justify-between items-center border-b border-neutral-800">
         <button 
           onClick={() => {
+            if (showDurationSelector) return;
             setSelectedPattern(null);
             setShowProgress(false);
             setIsCreating(false);
             setIsBreathing(false);
             setIsCompleted(false);
           }}
-          className="flex flex-col hover:opacity-80 transition-opacity"
+          className={`flex flex-col transition-opacity ${showDurationSelector ? 'cursor-default' : 'hover:opacity-80'}`}
         >
           <div className="flex items-center gap-2">
             <Wind className="w-8 h-8 text-blue-400" />
@@ -1061,14 +988,6 @@ export default function App() {
           >
             <Timer className="w-4 h-4 text-amber-400" />
             Goals
-          </button>
-
-          <button 
-            onClick={() => setIsMuted(!isMuted)}
-            className="p-2 rounded-full bg-neutral-900 text-neutral-400 hover:text-white transition-colors"
-            title={isMuted ? "Unmute" : "Mute"}
-          >
-            {isMuted ? <VolumeX className="w-5 h-5" /> : <Volume2 className="w-5 h-5" />}
           </button>
 
           {pubkey ? (
@@ -1515,7 +1434,7 @@ export default function App() {
               </div>
 
               <div className="grid grid-cols-2 gap-4 mb-8">
-                {[1, 3, 5].map(mins => (
+                {[1, 3, 5, 8].map(mins => (
                   <button
                     key={mins}
                     onClick={() => startSession(pendingPattern, mins)}
@@ -1532,6 +1451,27 @@ export default function App() {
                   <span className="text-2xl font-bold text-white group-hover:text-blue-400">∞</span>
                   <span className="text-xs font-bold uppercase tracking-widest text-neutral-500">Continuous</span>
                 </button>
+                
+                {/* Custom Duration Dropdown */}
+                <div className="flex flex-col items-center gap-2 p-6 rounded-2xl bg-neutral-800 border border-neutral-700 hover:border-blue-500 hover:bg-neutral-700 transition-all group relative">
+                  <select 
+                    onChange={(e) => {
+                      const val = parseInt(e.target.value);
+                      if (val > 0) startSession(pendingPattern, val);
+                    }}
+                    className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
+                    defaultValue=""
+                  >
+                    <option value="" disabled>Custom</option>
+                    {Array.from({ length: 60 }, (_, i) => i + 1).map(m => (
+                      <option key={m} value={m} className="bg-neutral-900 text-sm">
+                        {m}
+                      </option>
+                    ))}
+                  </select>
+                  <span className="text-2xl font-bold text-white group-hover:text-blue-400">...</span>
+                  <span className="text-xs font-bold uppercase tracking-widest text-neutral-500">Custom</span>
+                </div>
               </div>
 
               <button 
@@ -1643,14 +1583,20 @@ export default function App() {
                   Select a breathing pattern to begin your practice. Connect with your breath and find your center.
                 </p>
                 <div className="flex flex-wrap justify-center gap-4 mb-8">
-                  <div className="flex items-center gap-3 bg-neutral-900 border border-neutral-800 px-6 py-3 rounded-full font-medium">
-                    <Volume2 className="w-5 h-5 text-blue-400" />
+                  <div className="flex items-center gap-3 bg-neutral-900 border border-neutral-800 px-6 py-3 rounded-2xl font-medium">
+                    <button 
+                      onClick={() => setIsMuted(!isMuted)}
+                      className="text-blue-400 hover:text-blue-300 transition-colors"
+                      title={isMuted ? "Unmute" : "Mute"}
+                    >
+                      {isMuted ? <VolumeX className="w-5 h-5" /> : <Volume2 className="w-5 h-5" />}
+                    </button>
                     <span className="text-xs font-bold uppercase tracking-widest text-neutral-500 mr-2">Soundscape</span>
                     <div className="relative">
                       <select 
                         value={selectedSound}
                         onChange={(e) => changeSound(e.target.value as SoundType)}
-                        className="bg-neutral-800 focus:outline-none text-white text-xs cursor-pointer appearance-none border border-neutral-700 focus:border-blue-500 px-4 py-1.5 rounded-full pr-8"
+                        className="bg-neutral-800 focus:outline-none text-white text-xs cursor-pointer appearance-none border border-neutral-700 focus:border-blue-500 px-4 py-1.5 rounded-2xl pr-8"
                       >
                         {SOUND_OPTIONS.map(option => (
                           <option key={option.id} value={option.id} className="bg-neutral-900">
@@ -1670,14 +1616,6 @@ export default function App() {
                   >
                     <Plus className="w-5 h-5" />
                     Create Pattern
-                  </button>
-
-                  <button 
-                    onClick={() => setShowRoomList(true)}
-                    className="inline-flex items-center gap-2 bg-blue-600/10 border border-blue-500/30 hover:bg-blue-600/20 text-blue-400 px-6 py-3 rounded-full transition-all font-medium"
-                  >
-                    <Users className="w-5 h-5" />
-                    Join Live Room
                   </button>
                 </div>
               </div>
@@ -1779,7 +1717,6 @@ export default function App() {
                 <button
                   onClick={() => {
                     setSelectedPattern(null);
-                    setIsLiveRoom(false);
                   }}
                   className="bg-neutral-800 hover:bg-neutral-700 text-white px-6 py-3 rounded-full font-bold transition-all"
                 >
@@ -1797,55 +1734,24 @@ export default function App() {
               className="flex flex-col items-center w-full"
             >
               {/* Visual Toggle */}
-              {!isLiveRoom && (
-                <div className="flex bg-neutral-900 p-1 rounded-full border border-neutral-800 mb-8">
-                  <button
-                    onClick={() => setVisualType('minimal')}
-                    className={`px-4 py-1.5 text-[10px] font-bold uppercase tracking-widest rounded-full transition-all ${
-                      visualType === 'minimal' ? 'bg-blue-600 text-white shadow-lg' : 'text-neutral-500 hover:text-neutral-300'
-                    }`}
-                  >
-                    Minimalistic
-                  </button>
-                  <button
-                    onClick={() => setVisualType('cat')}
-                    className={`px-4 py-1.5 text-[10px] font-bold uppercase tracking-widest rounded-full transition-all ${
-                      visualType === 'cat' ? 'bg-blue-600 text-white shadow-lg' : 'text-neutral-500 hover:text-neutral-300'
-                    }`}
-                  >
-                    Visual
-                  </button>
-                </div>
-              )}
-
-              {isLiveRoom && (
-                <div className="flex flex-col items-center gap-4 mb-8">
-                  <div className="flex items-center gap-2 bg-blue-600/10 border border-blue-500/30 px-4 py-2 rounded-full">
-                    <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse" />
-                    <span className="text-xs font-bold text-blue-400 uppercase tracking-widest">Live Room</span>
-                  </div>
-                  
-                  <div className="flex -space-x-2 overflow-hidden">
-                    {liveUsers.slice(0, 5).map((user, i) => (
-                      <div 
-                        key={user.id} 
-                        className="inline-block h-8 w-8 rounded-full ring-2 ring-black bg-neutral-800 flex items-center justify-center text-[10px] font-bold text-neutral-400"
-                        title={user.name}
-                      >
-                        {user.name.charAt(0)}
-                      </div>
-                    ))}
-                    {liveUsers.length > 5 && (
-                      <div className="inline-block h-8 w-8 rounded-full ring-2 ring-black bg-neutral-900 flex items-center justify-center text-[10px] font-bold text-neutral-400">
-                        +{liveUsers.length - 5}
-                      </div>
-                    )}
-                  </div>
-                  <p className="text-[10px] text-neutral-500 font-bold uppercase tracking-widest">
-                    {liveUsers.length} {liveUsers.length === 1 ? 'person' : 'people'} breathing together
-                  </p>
-                </div>
-              )}
+              <div className="flex bg-neutral-900 p-1 rounded-full border border-neutral-800 mb-8">
+                <button
+                  onClick={() => setVisualType('minimal')}
+                  className={`px-4 py-1.5 text-[10px] font-bold uppercase tracking-widest rounded-full transition-all ${
+                    visualType === 'minimal' ? 'bg-blue-600 text-white shadow-lg' : 'text-neutral-500 hover:text-neutral-300'
+                  }`}
+                >
+                  Minimalistic
+                </button>
+                <button
+                  onClick={() => setVisualType('cat')}
+                  className={`px-4 py-1.5 text-[10px] font-bold uppercase tracking-widest rounded-full transition-all ${
+                    visualType === 'cat' ? 'bg-blue-600 text-white shadow-lg' : 'text-neutral-500 hover:text-neutral-300'
+                  }`}
+                >
+                  Visual
+                </button>
+              </div>
 
               <div className="mb-8 text-center">
                 <h2 className="text-2xl font-display font-bold text-neutral-400">{selectedPattern.name}</h2>
@@ -2064,132 +1970,6 @@ export default function App() {
         )}
       </AnimatePresence>
 
-      {/* Room List Modal */}
-      <AnimatePresence>
-        {showRoomList && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
-            <motion.div
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.95 }}
-              className="w-full max-w-md bg-neutral-900 border border-neutral-800 p-8 rounded-3xl shadow-2xl"
-            >
-              <div className="flex justify-between items-center mb-8">
-                <h2 className="text-2xl font-display font-bold">Live Rooms</h2>
-                <button onClick={() => setShowRoomList(false)} className="text-neutral-500 hover:text-white">
-                  <X className="w-6 h-6" />
-                </button>
-              </div>
-
-              <div className="space-y-4 max-h-[400px] overflow-y-auto mb-8 pr-2 custom-scrollbar">
-                {availableRooms.map((room) => (
-                  <button
-                    key={room.id}
-                    onClick={() => joinLiveRoom(room.id)}
-                    className="w-full flex items-center justify-between p-4 bg-neutral-800/50 border border-neutral-800 rounded-2xl hover:border-blue-500 transition-all text-left"
-                  >
-                    <div>
-                      <div className="font-bold text-white">{room.name}</div>
-                      <div className="text-[10px] text-neutral-500 uppercase tracking-widest">
-                        {BREATHING_PATTERNS.find(p => p.id === room.patternId)?.name}
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2 text-blue-400">
-                      <Users className="w-4 h-4" />
-                      <span className="text-sm font-bold">{room.userCount}</span>
-                    </div>
-                  </button>
-                ))}
-                {availableRooms.length === 0 && (
-                  <div className="text-center py-8 text-neutral-600 italic text-sm">
-                    No active rooms. Be the first to start one!
-                  </div>
-                )}
-              </div>
-
-              <button
-                onClick={() => {
-                  setShowRoomList(false);
-                  setShowCreateRoom(true);
-                }}
-                className="w-full py-4 rounded-2xl bg-blue-600 text-white font-bold hover:bg-blue-500 transition-colors flex items-center justify-center gap-2"
-              >
-                <Plus className="w-5 h-5" />
-                Create New Room
-              </button>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
-
-      {/* Create Room Modal */}
-      <AnimatePresence>
-        {showCreateRoom && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
-            <motion.div
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.95 }}
-              className="w-full max-w-md bg-neutral-900 border border-neutral-800 p-8 rounded-3xl shadow-2xl"
-            >
-              <div className="flex justify-between items-center mb-8">
-                <h2 className="text-2xl font-display font-bold">Create Room</h2>
-                <button onClick={() => setShowCreateRoom(false)} className="text-neutral-500 hover:text-white">
-                  <X className="w-6 h-6" />
-                </button>
-              </div>
-
-              <div className="space-y-6">
-                <div>
-                  <label className="block text-xs font-bold uppercase tracking-widest text-neutral-500 mb-2">Room Name</label>
-                  <input 
-                    type="text" 
-                    value={newRoomName}
-                    onChange={(e) => setNewRoomName(e.target.value)}
-                    placeholder="Zen Space..."
-                    className="w-full bg-neutral-800 border border-neutral-700 rounded-xl px-4 py-3 focus:outline-none focus:border-blue-500 transition-colors"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold uppercase tracking-widest text-neutral-500 mb-2">Breathing Pattern</label>
-                  <select 
-                    value={newRoomPatternId}
-                    onChange={(e) => setNewRoomPatternId(e.target.value)}
-                    className="w-full bg-neutral-800 border border-neutral-700 rounded-xl px-4 py-3 focus:outline-none focus:border-blue-500 transition-colors appearance-none"
-                  >
-                    {BREATHING_PATTERNS.map(p => (
-                      <option key={p.id} value={p.id}>{p.name}</option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold uppercase tracking-widest text-neutral-500 mb-2">Soundscape</label>
-                  <select 
-                    value={newRoomSoundId}
-                    onChange={(e) => setNewRoomSoundId(e.target.value as SoundType)}
-                    className="w-full bg-neutral-800 border border-neutral-700 rounded-xl px-4 py-3 focus:outline-none focus:border-blue-500 transition-colors appearance-none"
-                  >
-                    {SOUND_OPTIONS.map(s => (
-                      <option key={s.id} value={s.id}>{s.name}</option>
-                    ))}
-                  </select>
-                </div>
-
-                <button 
-                  onClick={createLiveRoom}
-                  disabled={!newRoomName.trim()}
-                  className="w-full bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white py-4 rounded-xl font-bold transition-all"
-                >
-                  Launch Room
-                </button>
-              </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
-
       {/* Share Pattern Prompt Modal */}
         <AnimatePresence>
           {showSharePrompt && lastCreatedPattern && (
@@ -2320,17 +2100,9 @@ export default function App() {
             </a>
           </div>
           
-          <a 
-            href="lightning:bohemia@minibits.cash"
-            className="inline-flex items-center gap-2 px-4 py-2 bg-amber-500/10 border border-amber-500/30 rounded-full text-amber-400 hover:bg-amber-500/20 transition-all font-bold group"
-          >
-            <span className="group-hover:scale-110 transition-transform">⚡</span>
-            Zap to Support
-          </a>
-          
           <div className="space-y-1">
-            <p>Built for the Nostr ecosystem. Login with NIP-07 extension.</p>
-            <p>Breathwork is a powerful tool for self-regulation. Practice safely.</p>
+            <p>Built for the Nostr ecosystem.</p>
+            <p>Breathwork is a powerful tool for self-regulation.</p>
           </div>
         </div>
       </footer>
