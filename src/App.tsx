@@ -4,7 +4,7 @@
  */
 
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { motion, AnimatePresence, useMotionValue, animate } from 'motion/react';
+import { motion, AnimatePresence, useMotionValue, animate, useTransform } from 'motion/react';
 import { 
   Wind, 
   LogIn, 
@@ -31,7 +31,10 @@ import {
   TrendingUp,
   Award,
   Calendar,
-  BarChart2
+  BarChart2,
+  Trophy,
+  TreeDeciduous,
+  Users
 } from 'lucide-react';
 import { 
   BarChart, 
@@ -45,7 +48,261 @@ import {
 } from 'recharts';
 import confetti from 'canvas-confetti';
 import { BREATHING_PATTERNS, BreathingPattern, BreathingPhase, SoundType, SOUND_OPTIONS, Session } from './types';
-import { loginWithNostr, postSessionToNostr } from './nostr';
+import { loginWithNostr, postSessionToNostr, postPatternToNostr, postAchievementToNostr } from './nostr';
+
+const ACHIEVEMENTS = [
+  { id: 'first_breath', name: 'First Breath', description: 'Complete your first session', icon: <Wind className="w-4 h-4" /> },
+  { id: 'tree_grower', name: 'Tree Grower', description: 'Grow a full tree (100% growth)', icon: <TreeDeciduous className="w-4 h-4" /> },
+  { id: 'early_bird', name: 'Early Bird', description: 'Session before 8 AM', icon: <TrendingUp className="w-4 h-4" /> },
+  { id: 'night_owl', name: 'Night Owl', description: 'Session after 10 PM', icon: <TrendingUp className="w-4 h-4" /> },
+  { id: 'streak_3', name: 'Consistency King', description: '3-day streak', icon: <Trophy className="w-4 h-4" /> },
+  { id: 'streak_10', name: 'Zen Master', description: '10-day streak', icon: <Award className="w-4 h-4" /> },
+  { id: 'live_breather', name: 'Live Breather', description: 'Join a live room', icon: <Users className="w-4 h-4" /> },
+];
+
+const BreathingVisuals = ({ scale, elapsedSeconds, timeGoal, currentPhase }: { 
+  scale: any, 
+  elapsedSeconds: number, 
+  timeGoal: number | null,
+  currentPhase: any
+}) => {
+  const growth = timeGoal ? Math.min(elapsedSeconds / timeGoal, 1) : Math.min(elapsedSeconds / 300, 1);
+  
+  // Create organic breathing scales
+  // scaleX expands less than scaleY to give a "stretching up" feel rather than just growing
+  const scaleX = useTransform(scale, [0.8, 1.5], [0.95, 1.2]);
+  const scaleY = useTransform(scale, [0.8, 1.5], [0.8, 1.5]);
+
+  return (
+    <div className="relative w-full h-72 flex flex-col items-center justify-end mb-8 overflow-hidden rounded-3xl bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 border border-neutral-800 shadow-xl">
+      {/* Mt. Fuji Background */}
+      <div className="absolute inset-0 z-0 pointer-events-none opacity-40">
+        <svg width="100%" height="100%" viewBox="0 0 400 200" preserveAspectRatio="xMidYMid slice">
+          <defs>
+            <radialGradient id="moonGradient" cx="50%" cy="50%" r="50%">
+              <stop offset="0%" stopColor="#FFF9E0" />
+              <stop offset="70%" stopColor="#FDE68A" />
+              <stop offset="100%" stopColor="#F5D142" />
+            </radialGradient>
+            <filter id="moonGlow">
+              <feGaussianBlur stdDeviation="3" result="blur" />
+              <feComposite in="SourceGraphic" in2="blur" operator="over" />
+            </filter>
+          </defs>
+          
+          {/* Distant Mountain Range */}
+          <path d="M0 200 L50 160 L120 180 L200 140 L300 170 L400 150 L400 200 Z" fill="#1E293B" />
+          
+          {/* Mt. Fuji */}
+          <path 
+            d="M100 200 L180 70 L220 70 L300 200 Z" 
+            fill="#334155" 
+          />
+          {/* Snow Cap */}
+          <path 
+            d="M180 70 L190 55 L210 55 L220 70 Z" 
+            fill="#94A3B8" 
+          />
+          
+          {/* Realistic Night Moon */}
+          <g filter="url(#moonGlow)">
+            <circle cx="340" cy="40" r="18" fill="url(#moonGradient)" opacity="0.8" />
+            {/* Craters */}
+            <circle cx="334" cy="36" r="2.5" fill="#E2C14D" opacity="0.4" />
+            <circle cx="346" cy="44" r="3.5" fill="#E2C14D" opacity="0.4" />
+            <circle cx="342" cy="32" r="1.5" fill="#E2C14D" opacity="0.4" />
+            <circle cx="332" cy="46" r="2" fill="#E2C14D" opacity="0.4" />
+          </g>
+        </svg>
+      </div>
+
+      {/* Zen Grass Patches with Flowers */}
+      <div className="absolute bottom-0 left-0 w-full h-12 z-10 pointer-events-none">
+        <div className="relative w-full h-full">
+          {[...Array(6)].map((_, i) => {
+            const flowerGrowth = Math.min(growth * 2.5, 1);
+            return (
+              <div 
+                key={i} 
+                className="absolute bottom-0"
+                style={{ left: `${15 + i * 15}%`, opacity: 0.4 + growth * 0.4 }}
+              >
+                <svg width="40" height="30" viewBox="0 0 40 30">
+                  {/* Grass */}
+                  <path 
+                    d="M5 30 Q10 15 15 30 M15 30 Q20 10 25 30 M25 30 Q30 18 35 30" 
+                    stroke="#48BB78" 
+                    strokeWidth="1.5" 
+                    fill="none" 
+                    strokeLinecap="round" 
+                  />
+                  {/* Blooming Flowers */}
+                  {flowerGrowth > 0.2 && (
+                    <motion.g 
+                      initial={{ scale: 0 }} 
+                      animate={{ scale: flowerGrowth }}
+                      style={{ originX: "20px", originY: "15px" }}
+                    >
+                      <circle cx="20" cy="12" r="3" fill="#F687B3" />
+                      <circle cx="10" cy="18" r="2" fill="#F687B3" />
+                      <circle cx="30" cy="20" r="2" fill="#F687B3" />
+                    </motion.g>
+                  )}
+                </svg>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="flex items-end justify-center gap-16 w-full relative pb-0 z-20">
+        {/* Mochi Chibi Cat - Moved to the left between grass patches (15% and 30%) */}
+        <div className="relative z-10 pointer-events-none translate-y-[12px] -translate-x-8">
+          <svg width="120" height="120" viewBox="0 -40 100 140" fill="none" xmlns="http://www.w3.org/2000/svg">
+            {/* Scaling Body Group - Tied to the floor (originY: 89 is the bottom of the feet) */}
+            <motion.g style={{ scaleX, scaleY, originX: "50px", originY: "89px" }}>
+              {/* Tiny Feet Touching Ground - Now inside scaling group to prevent separation */}
+              <ellipse cx="38" cy="86" rx="6" ry="3" fill="white" stroke="#F0F0F0" strokeWidth="0.5" />
+              <ellipse cx="62" cy="86" rx="6" ry="3" fill="white" stroke="#F0F0F0" strokeWidth="0.5" />
+
+              {/* Round Body/Head (Mochi style) */}
+              <path 
+                d="M15 60 Q15 25 50 25 T85 60 Q85 85 50 85 T15 60" 
+                fill="white" 
+                stroke="#F0F0F0" 
+                strokeWidth="1" 
+              />
+              
+              {/* Tiny Pink Ears */}
+              <path d="M25 35 L20 20 L35 28 Z" fill="#FFCDD2" />
+              <path d="M75 35 L80 20 L65 28 Z" fill="#FFCDD2" />
+
+              {/* Face */}
+              <motion.g
+                animate={{ y: [0, -0.5, 0] }}
+                transition={{ duration: 2, repeat: Infinity, ease: "easeInOut" }}
+              >
+                {/* Cat Eyes - more focused/cat-like */}
+                {currentPhase?.name === 'Inhale' ? (
+                  <>
+                    <path d="M35 52 Q40 48 45 52" stroke="#333" strokeWidth="2" fill="none" strokeLinecap="round" />
+                    <path d="M55 52 Q60 48 65 52" stroke="#333" strokeWidth="2" fill="none" strokeLinecap="round" />
+                  </>
+                ) : (
+                  <>
+                    {/* Slightly oval eyes with small pupils */}
+                    <ellipse cx="40" cy="52" rx="3" ry="4" fill="#333" />
+                    <ellipse cx="60" cy="52" rx="3" ry="4" fill="#333" />
+                    <circle cx="40.5" cy="50.5" r="1" fill="white" />
+                    <circle cx="60.5" cy="50.5" r="1" fill="white" />
+                  </>
+                )}
+                
+                {/* Cat Nose & Mouth area */}
+                <path d="M48 58 Q50 60 52 58" stroke="#333" strokeWidth="1" fill="none" />
+                <path d="M46 62 Q48 64 50 62 Q52 64 54 62" stroke="#333" strokeWidth="1.2" fill="none" strokeLinecap="round" />
+                
+                {/* Whiskers */}
+                <line x1="32" y1="58" x2="22" y2="56" stroke="#DDD" strokeWidth="1" />
+                <line x1="32" y1="61" x2="20" y2="62" stroke="#DDD" strokeWidth="1" />
+                <line x1="68" y1="58" x2="78" y2="56" stroke="#DDD" strokeWidth="1" />
+                <line x1="68" y1="61" x2="80" y2="62" stroke="#DDD" strokeWidth="1" />
+              </motion.g>
+            </motion.g>
+          </svg>
+        </div>
+
+        {/* Detailed Growing Cherry Blossom Tree */}
+        <motion.div 
+          style={{ 
+            scale: 0.85 + growth * 0.35, 
+            originY: 1,
+            opacity: 0.95
+          }}
+          className="relative z-0"
+        >
+          <svg width="140" height="200" viewBox="0 0 200 300" fill="none" xmlns="http://www.w3.org/2000/svg">
+            {/* Trunk - Organic growth - Start from absolute bottom (300) */}
+            <motion.path 
+              d={`M100 300 Q105 ${300 - (growth * 75)} 100 ${300 - (growth * 160)}`} 
+              stroke="#4E342E" 
+              strokeWidth={4 + growth * 6} 
+              strokeLinecap="round" 
+              initial={{ pathLength: 0 }}
+              animate={{ pathLength: 1 }}
+              transition={{ duration: 1 }}
+            />
+            
+            {/* Branch 1 - Right */}
+            {growth > 0.3 && (
+              <motion.g initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
+                <path 
+                  d={`M100 ${300 - (0.3 * 160)} Q120 ${300 - (0.4 * 160)} 140 ${300 - (0.5 * 160)}`} 
+                  stroke="#4E342E" 
+                  strokeWidth={2 + growth * 2} 
+                  strokeLinecap="round" 
+                />
+                {growth > 0.45 && (
+                  <g transform={`translate(140, ${300 - (0.5 * 160)}) scale(${0.5 + growth * 0.5})`}>
+                    <circle cx="0" cy="0" r="12" fill="#F8BBD0" opacity="0.85" />
+                    <circle cx="8" cy="-5" r="10" fill="#FCE4EC" opacity="0.85" />
+                    <circle cx="-5" cy="-8" r="9" fill="#F48FB1" opacity="0.85" />
+                  </g>
+                )}
+              </motion.g>
+            )}
+
+            {/* Branch 2 - Left */}
+            {growth > 0.5 && (
+              <motion.g initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
+                <path 
+                  d={`M100 ${300 - (0.5 * 160)} Q80 ${300 - (0.6 * 160)} 60 ${300 - (0.7 * 160)}`} 
+                  stroke="#4E342E" 
+                  strokeWidth={1.5 + growth * 2} 
+                  strokeLinecap="round" 
+                />
+                {growth > 0.65 && (
+                  <g transform={`translate(60, ${300 - (0.7 * 160)}) scale(${0.5 + growth * 0.5})`}>
+                    <circle cx="0" cy="0" r="14" fill="#F48FB1" opacity="0.85" />
+                    <circle cx="-8" cy="-5" r="11" fill="#F8BBD0" opacity="0.85" />
+                    <circle cx="5" cy="-8" r="10" fill="#F06292" opacity="0.85" />
+                  </g>
+                )}
+              </motion.g>
+            )}
+
+            {/* Top Canopy */}
+            {growth > 0.75 && (
+              <motion.g initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
+                <path 
+                  d={`M100 ${300 - (0.75 * 160)} L100 ${300 - (growth * 160)}`} 
+                  stroke="#4E342E" 
+                  strokeWidth={1 + growth * 2} 
+                  strokeLinecap="round" 
+                />
+                <g transform={`translate(100, ${300 - (growth * 160)}) scale(${0.4 + growth * 0.6})`}>
+                  <circle cx="0" cy="-10" r="18" fill="#F06292" opacity="0.95" />
+                  <circle cx="-12" cy="0" r="15" fill="#F48FB1" opacity="0.9" />
+                  <circle cx="12" cy="0" r="15" fill="#F8BBD0" opacity="0.9" />
+                  <circle cx="0" cy="10" r="12" fill="#EC407A" opacity="0.8" />
+                  
+                  {/* Small blossom highlights at full growth */}
+                  {growth > 0.9 && (
+                    <>
+                      <circle cx="-5" cy="-5" r="2.5" fill="white" opacity="0.7" />
+                      <circle cx="8" cy="2" r="2.5" fill="white" opacity="0.7" />
+                      <circle cx="0" cy="8" r="2.5" fill="white" opacity="0.7" />
+                    </>
+                  )}
+                </g>
+              </motion.g>
+            )}
+          </svg>
+        </motion.div>
+      </div>
+    </div>
+  );
+};
 
 export default function App() {
   const [pubkey, setPubkey] = useState<string | null>(null);
@@ -59,6 +316,8 @@ export default function App() {
   const [isPosting, setIsPosting] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
+  const [showDurationSelector, setShowDurationSelector] = useState(false);
+  const [pendingPattern, setPendingPattern] = useState<BreathingPattern | null>(null);
   const [selectedSound, setSelectedSound] = useState<SoundType>('forest');
   const [goalMinutes, setGoalMinutes] = useState<string>('00');
   const [goalSeconds, setGoalSeconds] = useState<string>('00');
@@ -74,6 +333,29 @@ export default function App() {
   const [referenceDate, setReferenceDate] = useState(new Date());
   const [hoveredTimeframe, setHoveredTimeframe] = useState<'day' | 'week' | 'month' | 'year' | 'all' | null>(null);
   const [calendarViewDate, setCalendarViewDate] = useState(new Date());
+  const [visualType, setVisualType] = useState<'minimal' | 'cat'>('minimal');
+  const [isLiveRoom, setIsLiveRoom] = useState(false);
+  const [liveUsers, setLiveUsers] = useState<{ id: string; name: string }[]>([]);
+  const [availableRooms, setAvailableRooms] = useState<{ id: string; name: string; userCount: number; patternId: string }[]>([]);
+  const [showRoomList, setShowRoomList] = useState(false);
+  const [showCreateRoom, setShowCreateRoom] = useState(false);
+  const [newRoomName, setNewRoomName] = useState('');
+  const [newRoomPatternId, setNewRoomPatternId] = useState(BREATHING_PATTERNS[0].id);
+  const [newRoomSoundId, setNewRoomSoundId] = useState<SoundType>('forest');
+  const [showGoals, setShowGoals] = useState(false);
+  const [dailyGoal, setDailyGoal] = useState(() => {
+    return parseInt(localStorage.getItem('relaxyz_goal_daily') || '10');
+  });
+  
+  const wsRef = useRef<WebSocket | null>(null);
+  const userId = useMemo(() => crypto.randomUUID(), []);
+  const userName = useMemo(() => pubkey ? `Nostr User ${pubkey.slice(0, 8)}` : `Guest ${Math.floor(Math.random() * 1000)}`, [pubkey]);
+  const [showSharePrompt, setShowSharePrompt] = useState(false);
+  const [lastCreatedPattern, setLastCreatedPattern] = useState<BreathingPattern | null>(null);
+  const [showAchievement, setShowAchievement] = useState(false);
+  const [hasEarnedTreeAchievement, setHasEarnedTreeAchievement] = useState(() => {
+    return localStorage.getItem('relaxyz_achievement_tree') === 'true';
+  });
 
   const SITE_START_DATE = useMemo(() => new Date('2026-03-20'), []);
 
@@ -129,6 +411,25 @@ export default function App() {
     
     return { currentStreak: current, bestStreak: best };
   }, [sessions]);
+
+  const earnedAchievements = useMemo(() => {
+    const earned = new Set<string>();
+    if (sessions.length > 0) earned.add('first_breath');
+    if (hasEarnedTreeAchievement) earned.add('tree_grower');
+    
+    const hasEarly = sessions.some(s => new Date(s.timestamp).getHours() < 8);
+    if (hasEarly) earned.add('early_bird');
+    
+    const hasLate = sessions.some(s => new Date(s.timestamp).getHours() >= 22);
+    if (hasLate) earned.add('night_owl');
+    
+    if (currentStreak >= 3) earned.add('streak_3');
+    if (currentStreak >= 10) earned.add('streak_10');
+    
+    if (sessions.some(s => s.isLive)) earned.add('live_breather');
+    
+    return earned;
+  }, [sessions, hasEarnedTreeAchievement, currentStreak]);
 
   const chartData = useMemo(() => {
     const ref = new Date(referenceDate);
@@ -468,6 +769,10 @@ export default function App() {
     localStorage.setItem('nostr-breath-custom', JSON.stringify(updated));
     setIsCreating(false);
     
+    // Show share prompt
+    setLastCreatedPattern(newPattern);
+    setShowSharePrompt(true);
+    
     // Reset form
     setNewName('');
     setNewInhale(4);
@@ -494,17 +799,17 @@ export default function App() {
   };
 
   // Start Session
-  const startSession = (pattern: BreathingPattern) => {
+  const startSession = (pattern: BreathingPattern, durationMins: number | null) => {
     initAudio();
     if (audioCtxRef.current?.state === 'suspended') {
       audioCtxRef.current.resume();
     }
     
-    // Calculate goal from inputs
-    const mins = parseInt(goalMinutes) || 0;
-    const secs = parseInt(goalSeconds) || 0;
-    const totalGoal = mins * 60 + secs;
-    setTimeGoal(totalGoal > 0 ? totalGoal : null);
+    if (durationMins === null) {
+      setTimeGoal(null);
+    } else {
+      setTimeGoal(durationMins * 60);
+    }
     
     setSelectedPattern(pattern);
     setIsBreathing(true);
@@ -513,12 +818,21 @@ export default function App() {
     setSessionStartTime(Date.now());
     setElapsedSeconds(0);
     setIsCompleted(false);
+    setShowDurationSelector(false);
+    setPendingPattern(null);
+  };
+
+  const handlePatternClick = (pattern: BreathingPattern) => {
+    setPendingPattern(pattern);
+    setShowDurationSelector(true);
   };
 
   const handleComplete = () => {
     setIsBreathing(false);
     setIsCompleted(true);
     
+    const growth = timeGoal ? Math.min(elapsedSeconds / timeGoal, 1) : Math.min(elapsedSeconds / 300, 1);
+
     // Save session
     if (selectedPattern && sessionStartTime) {
       const duration = Math.floor((Date.now() - sessionStartTime) / 1000);
@@ -526,9 +840,17 @@ export default function App() {
         id: crypto.randomUUID(),
         timestamp: Date.now(),
         duration,
-        pattern: selectedPattern.name
+        pattern: selectedPattern.name,
+        isLive: isLiveRoom
       };
       setSessions(prev => [...prev, newSession]);
+
+      // Check for first tree achievement
+      if (growth >= 1 && !hasEarnedTreeAchievement) {
+        setHasEarnedTreeAchievement(true);
+        localStorage.setItem('relaxyz_achievement_tree', 'true');
+        setShowAchievement(true);
+      }
     }
 
     confetti({
@@ -537,6 +859,28 @@ export default function App() {
       origin: { y: 0.6 },
       colors: ['#60a5fa', '#34d399', '#818cf8']
     });
+  };
+
+  const handleSharePattern = async () => {
+    if (!lastCreatedPattern) return;
+    
+    let currentPubkey = pubkey;
+    if (!currentPubkey) {
+      currentPubkey = await loginWithNostr();
+      if (currentPubkey) {
+        setPubkey(currentPubkey);
+      } else {
+        return;
+      }
+    }
+
+    setIsPosting(true);
+    const success = await postPatternToNostr(currentPubkey, lastCreatedPattern.name);
+    setIsPosting(false);
+    if (success) {
+      alert('Pattern shared to Nostr!');
+      setShowSharePrompt(false);
+    }
   };
 
   const handleShare = async () => {
@@ -550,6 +894,87 @@ export default function App() {
     setIsPosting(false);
     if (success) {
       alert('Session shared to Nostr!');
+    }
+  };
+
+  const handleShareAchievement = async () => {
+    let currentPubkey = pubkey;
+    if (!currentPubkey) {
+      currentPubkey = await loginWithNostr();
+      if (currentPubkey) {
+        setPubkey(currentPubkey);
+      } else {
+        return;
+      }
+    }
+    
+    if (currentPubkey) {
+      setIsPosting(true);
+      const success = await postAchievementToNostr(currentPubkey, "First Tree Completed");
+      setIsPosting(false);
+      if (success) {
+        alert('Achievement shared to Nostr!');
+        setShowAchievement(false);
+      }
+    }
+  };
+
+  // Live Room WebSocket Logic
+  useEffect(() => {
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const ws = new WebSocket(`${protocol}//${window.location.host}`);
+    wsRef.current = ws;
+
+    ws.onmessage = (event) => {
+      const message = JSON.parse(event.data);
+      if (message.type === 'presence') {
+        setLiveUsers(message.users);
+      } else if (message.type === 'room_list') {
+        setAvailableRooms(message.rooms);
+      } else if (message.type === 'room_joined') {
+        const room = message.room;
+        const pattern = BREATHING_PATTERNS.find(p => p.id === room.patternId) || BREATHING_PATTERNS[0];
+        setSelectedPattern(pattern);
+        changeSound(room.soundId as SoundType);
+        setIsBreathing(true);
+        setSessionStartTime(Date.now());
+        setIsLiveRoom(true);
+        setTimeGoal(null);
+        setVisualType('minimal');
+      }
+    };
+
+    return () => {
+      ws.close();
+      wsRef.current = null;
+    };
+  }, [userId, userName]);
+
+  const createLiveRoom = () => {
+    if (wsRef.current && newRoomName.trim()) {
+      wsRef.current.send(JSON.stringify({
+        type: 'create_room',
+        roomId: crypto.randomUUID(),
+        roomName: newRoomName,
+        patternId: newRoomPatternId,
+        soundId: newRoomSoundId,
+        userId,
+        userName
+      }));
+      setShowCreateRoom(false);
+      setNewRoomName('');
+    }
+  };
+
+  const joinLiveRoom = (roomId: string) => {
+    if (wsRef.current) {
+      wsRef.current.send(JSON.stringify({
+        type: 'join',
+        roomId,
+        userId,
+        userName
+      }));
+      setShowRoomList(false);
     }
   };
 
@@ -605,12 +1030,21 @@ export default function App() {
     <div className="min-h-screen flex flex-col bg-neutral-950 text-neutral-100 font-sans antialiased">
       {/* Header */}
       <header className="p-6 flex justify-between items-center border-b border-neutral-800">
-        <div className="flex flex-col">
+        <button 
+          onClick={() => {
+            setSelectedPattern(null);
+            setShowProgress(false);
+            setIsCreating(false);
+            setIsBreathing(false);
+            setIsCompleted(false);
+          }}
+          className="flex flex-col hover:opacity-80 transition-opacity"
+        >
           <div className="flex items-center gap-2">
             <Wind className="w-8 h-8 text-blue-400" />
             <h1 className="text-2xl font-display font-bold tracking-tight">Relaxyz</h1>
           </div>
-        </div>
+        </button>
         
         <div className="flex items-center gap-4">
           <button 
@@ -619,6 +1053,14 @@ export default function App() {
           >
             <TrendingUp className="w-4 h-4 text-emerald-400" />
             My Progress
+          </button>
+
+          <button 
+            onClick={() => setShowGoals(true)}
+            className="flex items-center gap-2 bg-neutral-900 hover:bg-neutral-800 text-neutral-300 px-4 py-2 rounded-full border border-neutral-800 transition-all text-sm font-medium"
+          >
+            <Timer className="w-4 h-4 text-amber-400" />
+            Goals
           </button>
 
           <button 
@@ -697,6 +1139,58 @@ export default function App() {
               </div>
 
               {/* Activity Section */}
+              <div className="bg-neutral-800/30 p-6 rounded-2xl border border-neutral-700/50 mb-8">
+                <h3 className="text-sm font-bold uppercase tracking-widest text-neutral-400 mb-6 flex items-center gap-2">
+                  <Trophy className="w-4 h-4 text-amber-400" />
+                  Achievements
+                </h3>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {ACHIEVEMENTS.map((achievement) => {
+                    const isEarned = earnedAchievements.has(achievement.id);
+                    return (
+                      <div 
+                        key={achievement.id}
+                        className={`p-4 rounded-xl border transition-all ${
+                          isEarned 
+                            ? 'bg-neutral-900 border-neutral-700 opacity-100' 
+                            : 'bg-neutral-900/50 border-neutral-800/50 opacity-40 grayscale'
+                        }`}
+                      >
+                        <div className="flex items-start gap-3">
+                          <div className={`p-2 rounded-lg ${isEarned ? 'bg-amber-500/20 text-amber-400' : 'bg-neutral-800 text-neutral-600'}`}>
+                            {achievement.icon}
+                          </div>
+                          <div>
+                            <div className="text-xs font-bold text-white">{achievement.name}</div>
+                            <div className="text-[10px] text-neutral-500 mt-0.5">{achievement.description}</div>
+                            {isEarned && (
+                              <button 
+                                onClick={async () => {
+                                  let currentPubkey = pubkey;
+                                  if (!currentPubkey) {
+                                    currentPubkey = await loginWithNostr();
+                                    if (currentPubkey) setPubkey(currentPubkey);
+                                    else return;
+                                  }
+                                  setIsPosting(true);
+                                  await postAchievementToNostr(currentPubkey, achievement.name);
+                                  setIsPosting(false);
+                                  alert('Achievement shared!');
+                                }}
+                                className="mt-2 text-[9px] font-bold uppercase tracking-widest text-blue-400 hover:text-blue-300 transition-colors flex items-center gap-1"
+                              >
+                                <Share2 className="w-3 h-3" />
+                                Share
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
               <div className="bg-neutral-800/30 p-6 rounded-2xl border border-neutral-700/50">
                 <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
                   <div>
@@ -1003,6 +1497,53 @@ export default function App() {
                 </div>
               </div>
             </motion.div>
+          ) : showDurationSelector && pendingPattern ? (
+            /* Duration Selection Modal */
+            <motion.div
+              key="duration-selector"
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="w-full max-w-md bg-neutral-900 border border-neutral-800 p-8 rounded-3xl shadow-2xl text-center"
+            >
+              <div className="mb-8">
+                <div className="w-16 h-16 bg-blue-500/10 rounded-2xl flex items-center justify-center mx-auto mb-4">
+                  <Timer className="w-8 h-8 text-blue-400" />
+                </div>
+                <h2 className="text-2xl font-display font-bold mb-2">How long?</h2>
+                <p className="text-neutral-500">Choose your session duration for <span className="text-blue-400 font-medium">{pendingPattern.name}</span></p>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4 mb-8">
+                {[1, 3, 5].map(mins => (
+                  <button
+                    key={mins}
+                    onClick={() => startSession(pendingPattern, mins)}
+                    className="flex flex-col items-center gap-2 p-6 rounded-2xl bg-neutral-800 border border-neutral-700 hover:border-blue-500 hover:bg-neutral-700 transition-all group"
+                  >
+                    <span className="text-2xl font-bold text-white group-hover:text-blue-400">{mins}</span>
+                    <span className="text-xs font-bold uppercase tracking-widest text-neutral-500">Minutes</span>
+                  </button>
+                ))}
+                <button
+                  onClick={() => startSession(pendingPattern, null)}
+                  className="flex flex-col items-center gap-2 p-6 rounded-2xl bg-neutral-800 border border-neutral-700 hover:border-blue-500 hover:bg-neutral-700 transition-all group"
+                >
+                  <span className="text-2xl font-bold text-white group-hover:text-blue-400">∞</span>
+                  <span className="text-xs font-bold uppercase tracking-widest text-neutral-500">Continuous</span>
+                </button>
+              </div>
+
+              <button 
+                onClick={() => {
+                  setShowDurationSelector(false);
+                  setPendingPattern(null);
+                }}
+                className="text-neutral-500 hover:text-white text-sm font-medium"
+              >
+                Go Back
+              </button>
+            </motion.div>
           ) : isCreating ? (
             /* Custom Pattern Form */
             <motion.div
@@ -1105,17 +1646,22 @@ export default function App() {
                   <div className="flex items-center gap-3 bg-neutral-900 border border-neutral-800 px-6 py-3 rounded-full font-medium">
                     <Volume2 className="w-5 h-5 text-blue-400" />
                     <span className="text-xs font-bold uppercase tracking-widest text-neutral-500 mr-2">Soundscape</span>
-                    <select 
-                      value={selectedSound}
-                      onChange={(e) => changeSound(e.target.value as SoundType)}
-                      className="bg-transparent focus:outline-none text-white text-center cursor-pointer appearance-none border-b border-neutral-700 focus:border-blue-500 px-1"
-                    >
-                      {SOUND_OPTIONS.map(option => (
-                        <option key={option.id} value={option.id} className="bg-neutral-900">
-                          {option.name}
-                        </option>
-                      ))}
-                    </select>
+                    <div className="relative">
+                      <select 
+                        value={selectedSound}
+                        onChange={(e) => changeSound(e.target.value as SoundType)}
+                        className="bg-neutral-800 focus:outline-none text-white text-xs cursor-pointer appearance-none border border-neutral-700 focus:border-blue-500 px-4 py-1.5 rounded-full pr-8"
+                      >
+                        {SOUND_OPTIONS.map(option => (
+                          <option key={option.id} value={option.id} className="bg-neutral-900">
+                            {option.name}
+                          </option>
+                        ))}
+                      </select>
+                      <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none">
+                        <ChevronRight className="w-3 h-3 text-neutral-500 rotate-90" />
+                      </div>
+                    </div>
                   </div>
 
                   <button 
@@ -1126,47 +1672,30 @@ export default function App() {
                     Create Pattern
                   </button>
 
-                  <div className="flex items-center gap-3 bg-neutral-900 border border-neutral-800 px-6 py-3 rounded-full font-medium">
-                    <Timer className="w-5 h-5 text-blue-400" />
-                    <span className="text-xs font-bold uppercase tracking-widest text-neutral-500 mr-2">Timer</span>
-                    <div className="flex items-center gap-1">
-                      <select 
-                        value={goalMinutes}
-                        onChange={(e) => setGoalMinutes(e.target.value)}
-                        className="bg-transparent focus:outline-none text-white text-center cursor-pointer appearance-none border-b border-neutral-700 focus:border-blue-500 px-1"
-                      >
-                        {Array.from({ length: 61 }, (_, i) => (
-                          <option key={i} value={i.toString().padStart(2, '0')} className="bg-neutral-900">
-                            {i.toString().padStart(2, '0')}
-                          </option>
-                        ))}
-                      </select>
-                      <span className="text-neutral-500 text-xs uppercase font-bold">m</span>
-                    </div>
-                    <div className="flex items-center gap-1">
-                      <select 
-                        value={goalSeconds}
-                        onChange={(e) => setGoalSeconds(e.target.value)}
-                        className="bg-transparent focus:outline-none text-white text-center cursor-pointer appearance-none border-b border-neutral-700 focus:border-blue-500 px-1"
-                      >
-                        {Array.from({ length: 60 }, (_, i) => (
-                          <option key={i} value={i.toString().padStart(2, '0')} className="bg-neutral-900">
-                            {i.toString().padStart(2, '0')}
-                          </option>
-                        ))}
-                      </select>
-                      <span className="text-neutral-500 text-xs uppercase font-bold">s</span>
-                    </div>
-                  </div>
+                  <button 
+                    onClick={() => setShowRoomList(true)}
+                    className="inline-flex items-center gap-2 bg-blue-600/10 border border-blue-500/30 hover:bg-blue-600/20 text-blue-400 px-6 py-3 rounded-full transition-all font-medium"
+                  >
+                    <Users className="w-5 h-5" />
+                    Join Live Room
+                  </button>
                 </div>
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {allPatterns.map((pattern) => (
-                  <button
+                  <div
                     key={pattern.id}
-                    onClick={() => startSession(pattern)}
-                    className="group relative bg-neutral-900 border border-neutral-800 p-6 rounded-2xl text-left hover:border-blue-500 transition-all duration-300 overflow-hidden"
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => handlePatternClick(pattern)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        handlePatternClick(pattern);
+                      }
+                    }}
+                    className="group relative bg-neutral-900 border border-neutral-800 p-6 rounded-2xl text-left hover:border-blue-500 transition-all duration-300 overflow-hidden cursor-pointer"
                   >
                     <div className="relative z-10">
                       <div className="flex justify-between items-start mb-2">
@@ -1174,12 +1703,26 @@ export default function App() {
                           {pattern.name}
                         </h3>
                         {pattern.id.startsWith('custom-') && (
-                          <button 
-                            onClick={(e) => deleteCustomPattern(pattern.id, e)}
-                            className="text-neutral-700 hover:text-red-400 transition-colors p-1"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
+                          <div className="flex gap-2">
+                            <button 
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setLastCreatedPattern(pattern);
+                                setShowSharePrompt(true);
+                              }}
+                              className="text-neutral-700 hover:text-blue-400 transition-colors p-1"
+                              title="Share on Nostr"
+                            >
+                              <Share2 className="w-4 h-4" />
+                            </button>
+                            <button 
+                              onClick={(e) => deleteCustomPattern(pattern.id, e)}
+                              className="text-neutral-700 hover:text-red-400 transition-colors p-1"
+                              title="Delete"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
                         )}
                       </div>
                       <p className="text-sm text-neutral-500 mb-4">
@@ -1196,7 +1739,7 @@ export default function App() {
                       </div>
                     </div>
                     <ChevronRight className="absolute right-6 bottom-6 w-6 h-6 text-neutral-700 group-hover:text-blue-500 group-hover:translate-x-1 transition-all" />
-                  </button>
+                  </div>
                 ))}
               </div>
             </motion.div>
@@ -1223,10 +1766,21 @@ export default function App() {
                     {isPosting ? 'Posting...' : 'Share to Nostr'}
                   </button>
                 ) : (
-                  <p className="text-xs text-neutral-500 mb-2">Login to share your progress on Nostr</p>
+                  <div className="flex flex-col gap-2">
+                    <button
+                      onClick={handleLogin}
+                      className="flex items-center justify-center gap-2 bg-neutral-800 hover:bg-neutral-700 text-white px-6 py-3 rounded-full font-bold transition-all border border-neutral-700"
+                    >
+                      <LogIn className="w-5 h-5" />
+                      Share your progress on Nostr
+                    </button>
+                  </div>
                 )}
                 <button
-                  onClick={() => setSelectedPattern(null)}
+                  onClick={() => {
+                    setSelectedPattern(null);
+                    setIsLiveRoom(false);
+                  }}
                   className="bg-neutral-800 hover:bg-neutral-700 text-white px-6 py-3 rounded-full font-bold transition-all"
                 >
                   Back to Patterns
@@ -1242,6 +1796,57 @@ export default function App() {
               exit={{ opacity: 0 }}
               className="flex flex-col items-center w-full"
             >
+              {/* Visual Toggle */}
+              {!isLiveRoom && (
+                <div className="flex bg-neutral-900 p-1 rounded-full border border-neutral-800 mb-8">
+                  <button
+                    onClick={() => setVisualType('minimal')}
+                    className={`px-4 py-1.5 text-[10px] font-bold uppercase tracking-widest rounded-full transition-all ${
+                      visualType === 'minimal' ? 'bg-blue-600 text-white shadow-lg' : 'text-neutral-500 hover:text-neutral-300'
+                    }`}
+                  >
+                    Minimalistic
+                  </button>
+                  <button
+                    onClick={() => setVisualType('cat')}
+                    className={`px-4 py-1.5 text-[10px] font-bold uppercase tracking-widest rounded-full transition-all ${
+                      visualType === 'cat' ? 'bg-blue-600 text-white shadow-lg' : 'text-neutral-500 hover:text-neutral-300'
+                    }`}
+                  >
+                    Visual
+                  </button>
+                </div>
+              )}
+
+              {isLiveRoom && (
+                <div className="flex flex-col items-center gap-4 mb-8">
+                  <div className="flex items-center gap-2 bg-blue-600/10 border border-blue-500/30 px-4 py-2 rounded-full">
+                    <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse" />
+                    <span className="text-xs font-bold text-blue-400 uppercase tracking-widest">Live Room</span>
+                  </div>
+                  
+                  <div className="flex -space-x-2 overflow-hidden">
+                    {liveUsers.slice(0, 5).map((user, i) => (
+                      <div 
+                        key={user.id} 
+                        className="inline-block h-8 w-8 rounded-full ring-2 ring-black bg-neutral-800 flex items-center justify-center text-[10px] font-bold text-neutral-400"
+                        title={user.name}
+                      >
+                        {user.name.charAt(0)}
+                      </div>
+                    ))}
+                    {liveUsers.length > 5 && (
+                      <div className="inline-block h-8 w-8 rounded-full ring-2 ring-black bg-neutral-900 flex items-center justify-center text-[10px] font-bold text-neutral-400">
+                        +{liveUsers.length - 5}
+                      </div>
+                    )}
+                  </div>
+                  <p className="text-[10px] text-neutral-500 font-bold uppercase tracking-widest">
+                    {liveUsers.length} {liveUsers.length === 1 ? 'person' : 'people'} breathing together
+                  </p>
+                </div>
+              )}
+
               <div className="mb-8 text-center">
                 <h2 className="text-2xl font-display font-bold text-neutral-400">{selectedPattern.name}</h2>
                 <div className="flex gap-2 mt-2 justify-center">
@@ -1290,23 +1895,55 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Breathing Visualizer */}
-              <div className="relative w-80 h-80 flex items-center justify-center mb-16">
-                {/* Stationary Max Circle (Background) */}
-                <div 
-                  className={`absolute w-60 h-60 rounded-full ${currentPhase?.color || 'bg-blue-600'} opacity-50 z-0 transition-colors duration-500`}
+              {/* Cat and Tree Visuals */}
+              {visualType === 'cat' ? (
+                <BreathingVisuals 
+                  scale={scale} 
+                  elapsedSeconds={elapsedSeconds} 
+                  timeGoal={timeGoal} 
+                  currentPhase={currentPhase}
                 />
-                
-                {/* Breathing Circle (Animated) */}
-                <motion.div
-                  style={{ scale }}
-                  className={`w-40 h-40 rounded-full flex items-center justify-center z-10 shadow-2xl ${currentPhase?.color || 'bg-blue-500'} transition-colors duration-500`}
+              ) : (
+                /* Breathing Visualizer (Minimalistic) */
+                <div className="relative w-80 h-80 flex items-center justify-center mb-8">
+                  {/* Stationary Max Circle (Background) */}
+                  <div 
+                    className={`absolute w-60 h-60 rounded-full ${currentPhase?.color || 'bg-blue-600'} opacity-30 z-0 transition-colors duration-500`}
+                  />
+                  
+                  {/* Breathing Circle (Animated) */}
+                  <motion.div
+                    style={{ scale }}
+                    className={`w-40 h-40 rounded-full flex items-center justify-center z-10 shadow-2xl ${currentPhase?.color || 'bg-blue-500'} transition-colors duration-500`}
+                  >
+                    <div className="text-center text-white">
+                      <div className="text-4xl font-display font-bold leading-none">{Math.ceil(timeLeftInPhase)}</div>
+                      <div className="text-[10px] uppercase tracking-widest font-bold opacity-80">{currentPhase?.name}</div>
+                    </div>
+                  </motion.div>
+                </div>
+              )}
+
+              {/* Breathing Instructions */}
+              <div className="text-center mb-12 h-16 flex flex-col justify-center">
+                <motion.h3 
+                  key={currentPhase?.name}
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="text-3xl font-display font-bold text-white uppercase tracking-widest"
                 >
-                  <div className="text-center text-white">
-                    <div className="text-4xl font-display font-bold leading-none">{Math.ceil(timeLeftInPhase)}</div>
-                    <div className="text-xs uppercase tracking-widest font-bold opacity-80">{currentPhase?.name}</div>
-                  </div>
-                </motion.div>
+                  {currentPhase?.name}
+                </motion.h3>
+                <motion.p 
+                  key={`${currentPhase?.name}-desc`}
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 0.5 }}
+                  className="text-neutral-400 text-xs mt-1"
+                >
+                  {currentPhase?.name === 'Inhale' && 'Breathe in slowly through your nose'}
+                  {currentPhase?.name === 'Hold' && 'Gently hold your breath'}
+                  {currentPhase?.name === 'Exhale' && 'Release the breath through your mouth'}
+                </motion.p>
               </div>
 
               {/* Controls */}
@@ -1339,29 +1976,362 @@ export default function App() {
             </motion.div>
           )}
         </AnimatePresence>
+
+        {/* Goals Modal */}
+      <AnimatePresence>
+        {showGoals && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="w-full max-w-md bg-neutral-900 border border-neutral-800 p-8 rounded-3xl shadow-2xl"
+            >
+              <div className="flex justify-between items-center mb-8">
+                <h2 className="text-2xl font-display font-bold">Your Goals</h2>
+                <button onClick={() => setShowGoals(false)} className="text-neutral-500 hover:text-white">
+                  <X className="w-6 h-6" />
+                </button>
+              </div>
+
+              <div className="space-y-8">
+                <div>
+                  <div className="flex justify-between items-end mb-4">
+                    <label className="text-xs font-bold uppercase tracking-widest text-neutral-500">Daily Breathing Goal</label>
+                    <span className="text-2xl font-display font-bold text-blue-400">{dailyGoal} min</span>
+                  </div>
+                  <input 
+                    type="range" 
+                    min="1" 
+                    max="60" 
+                    value={dailyGoal}
+                    onChange={(e) => {
+                      const val = parseInt(e.target.value);
+                      setDailyGoal(val);
+                      localStorage.setItem('relaxyz_goal_daily', val.toString());
+                    }}
+                    className="w-full h-2 bg-neutral-800 rounded-lg appearance-none cursor-pointer accent-blue-500"
+                  />
+                  <div className="flex justify-between mt-2 text-[10px] font-bold text-neutral-600 uppercase tracking-widest">
+                    <span>1 min</span>
+                    <span>60 min</span>
+                  </div>
+                </div>
+
+                <div className="bg-neutral-800/50 p-6 rounded-2xl border border-neutral-800">
+                  <h3 className="text-xs font-bold uppercase tracking-widest text-neutral-400 mb-4">Today's Progress</h3>
+                  {(() => {
+                    const today = new Date().toDateString();
+                    const todaySeconds = sessions
+                      .filter(s => new Date(s.timestamp).toDateString() === today)
+                      .reduce((acc, s) => acc + s.duration, 0);
+                    const todayMinutes = Math.floor(todaySeconds / 60);
+                    const progress = Math.min((todayMinutes / dailyGoal) * 100, 100);
+                    
+                    return (
+                      <div className="space-y-4">
+                        <div className="flex justify-between items-center">
+                          <span className="text-sm font-bold text-white">{todayMinutes} / {dailyGoal} minutes</span>
+                          <span className="text-sm font-bold text-blue-400">{Math.round(progress)}%</span>
+                        </div>
+                        <div className="w-full h-3 bg-neutral-900 rounded-full overflow-hidden border border-neutral-800">
+                          <motion.div 
+                            initial={{ width: 0 }}
+                            animate={{ width: `${progress}%` }}
+                            className="h-full bg-gradient-to-r from-blue-600 to-blue-400"
+                          />
+                        </div>
+                        {progress >= 100 && (
+                          <div className="flex items-center gap-2 text-emerald-400 text-[10px] font-bold uppercase tracking-widest">
+                            <CheckCircle2 className="w-3 h-3" />
+                            Goal Reached!
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
+                </div>
+
+                <button 
+                  onClick={() => setShowGoals(false)}
+                  className="w-full bg-neutral-800 hover:bg-neutral-700 text-white py-4 rounded-xl font-bold transition-all"
+                >
+                  Close
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Room List Modal */}
+      <AnimatePresence>
+        {showRoomList && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="w-full max-w-md bg-neutral-900 border border-neutral-800 p-8 rounded-3xl shadow-2xl"
+            >
+              <div className="flex justify-between items-center mb-8">
+                <h2 className="text-2xl font-display font-bold">Live Rooms</h2>
+                <button onClick={() => setShowRoomList(false)} className="text-neutral-500 hover:text-white">
+                  <X className="w-6 h-6" />
+                </button>
+              </div>
+
+              <div className="space-y-4 max-h-[400px] overflow-y-auto mb-8 pr-2 custom-scrollbar">
+                {availableRooms.map((room) => (
+                  <button
+                    key={room.id}
+                    onClick={() => joinLiveRoom(room.id)}
+                    className="w-full flex items-center justify-between p-4 bg-neutral-800/50 border border-neutral-800 rounded-2xl hover:border-blue-500 transition-all text-left"
+                  >
+                    <div>
+                      <div className="font-bold text-white">{room.name}</div>
+                      <div className="text-[10px] text-neutral-500 uppercase tracking-widest">
+                        {BREATHING_PATTERNS.find(p => p.id === room.patternId)?.name}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 text-blue-400">
+                      <Users className="w-4 h-4" />
+                      <span className="text-sm font-bold">{room.userCount}</span>
+                    </div>
+                  </button>
+                ))}
+                {availableRooms.length === 0 && (
+                  <div className="text-center py-8 text-neutral-600 italic text-sm">
+                    No active rooms. Be the first to start one!
+                  </div>
+                )}
+              </div>
+
+              <button
+                onClick={() => {
+                  setShowRoomList(false);
+                  setShowCreateRoom(true);
+                }}
+                className="w-full py-4 rounded-2xl bg-blue-600 text-white font-bold hover:bg-blue-500 transition-colors flex items-center justify-center gap-2"
+              >
+                <Plus className="w-5 h-5" />
+                Create New Room
+              </button>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Create Room Modal */}
+      <AnimatePresence>
+        {showCreateRoom && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="w-full max-w-md bg-neutral-900 border border-neutral-800 p-8 rounded-3xl shadow-2xl"
+            >
+              <div className="flex justify-between items-center mb-8">
+                <h2 className="text-2xl font-display font-bold">Create Room</h2>
+                <button onClick={() => setShowCreateRoom(false)} className="text-neutral-500 hover:text-white">
+                  <X className="w-6 h-6" />
+                </button>
+              </div>
+
+              <div className="space-y-6">
+                <div>
+                  <label className="block text-xs font-bold uppercase tracking-widest text-neutral-500 mb-2">Room Name</label>
+                  <input 
+                    type="text" 
+                    value={newRoomName}
+                    onChange={(e) => setNewRoomName(e.target.value)}
+                    placeholder="Zen Space..."
+                    className="w-full bg-neutral-800 border border-neutral-700 rounded-xl px-4 py-3 focus:outline-none focus:border-blue-500 transition-colors"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold uppercase tracking-widest text-neutral-500 mb-2">Breathing Pattern</label>
+                  <select 
+                    value={newRoomPatternId}
+                    onChange={(e) => setNewRoomPatternId(e.target.value)}
+                    className="w-full bg-neutral-800 border border-neutral-700 rounded-xl px-4 py-3 focus:outline-none focus:border-blue-500 transition-colors appearance-none"
+                  >
+                    {BREATHING_PATTERNS.map(p => (
+                      <option key={p.id} value={p.id}>{p.name}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold uppercase tracking-widest text-neutral-500 mb-2">Soundscape</label>
+                  <select 
+                    value={newRoomSoundId}
+                    onChange={(e) => setNewRoomSoundId(e.target.value as SoundType)}
+                    className="w-full bg-neutral-800 border border-neutral-700 rounded-xl px-4 py-3 focus:outline-none focus:border-blue-500 transition-colors appearance-none"
+                  >
+                    {SOUND_OPTIONS.map(s => (
+                      <option key={s.id} value={s.id}>{s.name}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <button 
+                  onClick={createLiveRoom}
+                  disabled={!newRoomName.trim()}
+                  className="w-full bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white py-4 rounded-xl font-bold transition-all"
+                >
+                  Launch Room
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Share Pattern Prompt Modal */}
+        <AnimatePresence>
+          {showSharePrompt && lastCreatedPattern && (
+            <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
+              <motion.div
+                initial={{ opacity: 0, scale: 0.95, y: 20 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.95, y: 20 }}
+                className="w-full max-w-sm bg-neutral-900 border border-neutral-800 p-8 rounded-3xl shadow-2xl text-center"
+              >
+                <div className="w-16 h-16 bg-blue-500/10 rounded-2xl flex items-center justify-center mx-auto mb-6">
+                  <Share2 className="w-8 h-8 text-blue-400" />
+                </div>
+                <h3 className="text-2xl font-display font-bold mb-2">Share your creation?</h3>
+                <p className="text-neutral-400 mb-8 text-sm leading-relaxed">
+                  Would you like to share <span className="text-blue-400 font-bold">"{lastCreatedPattern.name}"</span> with the Nostr community?
+                </p>
+                
+                <div className="flex flex-col gap-3">
+                  <button
+                    onClick={handleSharePattern}
+                    disabled={isPosting}
+                    className="w-full py-4 rounded-2xl bg-blue-600 text-white font-bold flex items-center justify-center gap-2 hover:bg-blue-500 transition-colors disabled:opacity-50"
+                  >
+                    {isPosting ? 'Sharing...' : (
+                      <>
+                        <Share2 className="w-5 h-5" />
+                        Share on Nostr
+                      </>
+                    )}
+                  </button>
+                  <button
+                    onClick={() => setShowSharePrompt(false)}
+                    className="w-full py-4 rounded-2xl bg-neutral-800 text-neutral-400 font-bold hover:text-white transition-colors"
+                  >
+                    Maybe Later
+                  </button>
+                </div>
+              </motion.div>
+            </div>
+          )}
+        </AnimatePresence>
+        {/* Achievement Modal */}
+        <AnimatePresence>
+          {showAchievement && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm"
+            >
+              <motion.div
+                initial={{ scale: 0.9, y: 20 }}
+                animate={{ scale: 1, y: 0 }}
+                exit={{ scale: 0.9, y: 20 }}
+                className="bg-neutral-900 border border-blue-500/30 p-8 rounded-3xl max-w-sm w-full text-center relative overflow-hidden"
+              >
+                {/* Decorative background glow */}
+                <div className="absolute -top-24 -left-24 w-48 h-48 bg-blue-600/20 blur-[80px]" />
+                <div className="absolute -bottom-24 -right-24 w-48 h-48 bg-pink-600/20 blur-[80px]" />
+
+                <div className="relative z-10">
+                  <div className="w-20 h-20 bg-blue-600/20 rounded-full flex items-center justify-center mx-auto mb-6 border border-blue-500/30">
+                    <Trophy className="w-10 h-10 text-blue-400" />
+                  </div>
+                  
+                  <h2 className="text-2xl font-bold mb-2">Achievement Unlocked!</h2>
+                  <p className="text-neutral-400 mb-6">
+                    You've successfully grown your first full tree. Your focus and dedication are blooming.
+                  </p>
+
+                  <div className="bg-neutral-800/50 rounded-2xl p-4 mb-8 border border-neutral-700 flex items-center gap-4 text-left">
+                    <div className="w-12 h-12 bg-green-500/20 rounded-xl flex items-center justify-center border border-green-500/30">
+                      <TreeDeciduous className="w-6 h-6 text-green-400" />
+                    </div>
+                    <div>
+                      <div className="text-xs font-bold text-blue-400 uppercase tracking-wider">Achievement</div>
+                      <div className="font-bold">First Tree Completed</div>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-col gap-3">
+                    <button
+                      onClick={handleShareAchievement}
+                      disabled={isPosting}
+                      className="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-4 rounded-2xl transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+                    >
+                      {isPosting ? (
+                        <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                      ) : (
+                        <Share2 className="w-5 h-5" />
+                      )}
+                      Share to Nostr
+                    </button>
+                    <button
+                      onClick={() => setShowAchievement(false)}
+                      className="w-full bg-transparent hover:bg-neutral-800 text-neutral-400 font-bold py-3 rounded-2xl transition-all"
+                    >
+                      Maybe later
+                    </button>
+                  </div>
+                </div>
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </main>
 
       {/* Footer */}
       <footer className="p-8 text-center text-neutral-600 text-xs border-t border-neutral-900">
-        <p>Built for the Nostr ecosystem. Login with NIP-07 extension.</p>
-        <p className="mt-2">Breathwork is a powerful tool for self-regulation. Practice safely.</p>
-        <div className="mt-4 flex flex-row justify-center items-center gap-6">
+        <div className="flex flex-col items-center gap-6">
+          <div className="flex flex-row justify-center items-center gap-6">
+            <a 
+              href="https://njump.me/nprofile1qqsymsh9wrz5lmurz0arqn6jjaqyfmtvz2z3qpfxqz5msnvr0wqjd7gprdmhxue69uhhg6r9vehhyetnwshxummnw3erztnrdakj7qgcwaehxw309aehqct5d9sj6ctjvdskucfwvdhk6tcpkvxva" 
+              target="_blank" 
+              rel="noopener noreferrer"
+              className="text-neutral-400 underline underline-offset-4 hover:text-white transition-colors"
+            >
+              Vibed by Bohemia
+            </a>
+            <a 
+              href="https://github.com/bohemia111/relaxyz" 
+              target="_blank" 
+              rel="noopener noreferrer"
+              className="text-neutral-400 underline underline-offset-4 hover:text-white transition-colors"
+            >
+              Github
+            </a>
+          </div>
+          
           <a 
-            href="https://njump.me/nprofile1qqsymsh9wrz5lmurz0arqn6jjaqyfmtvz2z3qpfxqz5msnvr0wqjd7gprdmhxue69uhhg6r9vehhyetnwshxummnw3erztnrdakj7qgcwaehxw309aehqct5d9sj6ctjvdskucfwvdhk6tcpkvxva" 
-            target="_blank" 
-            rel="noopener noreferrer"
-            className="text-neutral-400 underline underline-offset-4 hover:text-white transition-colors"
+            href="lightning:bohemia@minibits.cash"
+            className="inline-flex items-center gap-2 px-4 py-2 bg-amber-500/10 border border-amber-500/30 rounded-full text-amber-400 hover:bg-amber-500/20 transition-all font-bold group"
           >
-            Vibed by Bohemia
+            <span className="group-hover:scale-110 transition-transform">⚡</span>
+            Zap to Support
           </a>
-          <a 
-            href="https://github.com/bohemia111/relaxyz" 
-            target="_blank" 
-            rel="noopener noreferrer"
-            className="text-neutral-400 underline underline-offset-4 hover:text-white transition-colors"
-          >
-            Github
-          </a>
+          
+          <div className="space-y-1">
+            <p>Built for the Nostr ecosystem. Login with NIP-07 extension.</p>
+            <p>Breathwork is a powerful tool for self-regulation. Practice safely.</p>
+          </div>
         </div>
       </footer>
     </div>

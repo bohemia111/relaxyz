@@ -15,6 +15,53 @@ export async function loginWithNostr(): Promise<string | null> {
   }
 }
 
+async function publishToRelays(signedEvent: any): Promise<boolean> {
+  // Common relays to publish to
+  const relays = [
+    'wss://relay.damus.io', 
+    'wss://nos.lol', 
+    'wss://relay.nostr.band',
+    'wss://relay.snort.social',
+    'wss://purplepag.es'
+  ];
+  
+  const publishPromises = relays.map(url => {
+    return new Promise((resolve) => {
+      const socket = new WebSocket(url);
+      const timeout = setTimeout(() => {
+        socket.close();
+        resolve(false);
+      }, 5000);
+
+      socket.onopen = () => {
+        socket.send(JSON.stringify(['EVENT', signedEvent]));
+      };
+
+      socket.onmessage = (msg) => {
+        try {
+          const data = JSON.parse(msg.data);
+          if (data[0] === 'OK' && data[1] === signedEvent.id) {
+            clearTimeout(timeout);
+            socket.close();
+            resolve(true);
+          }
+        } catch (e) {
+          // Ignore parse errors
+        }
+      };
+
+      socket.onerror = () => {
+        clearTimeout(timeout);
+        resolve(false);
+      };
+    });
+  });
+
+  // We consider it a success if at least one relay accepted it
+  const results = await Promise.all(publishPromises);
+  return results.some(r => r === true);
+}
+
 export async function postSessionToNostr(pubkey: string, sessionData: { pattern: string, duration: number }) {
   if (!window.nostr) return false;
 
@@ -37,51 +84,60 @@ export async function postSessionToNostr(pubkey: string, sessionData: { pattern:
 
   try {
     const signedEvent = await window.nostr.signEvent(eventTemplate);
-    
-    // Common relays to publish to
-    const relays = [
-      'wss://relay.damus.io', 
-      'wss://nos.lol', 
-      'wss://relay.nostr.band',
-      'wss://relay.snort.social',
-      'wss://purplepag.es'
-    ];
-    
-    const publishPromises = relays.map(url => {
-      return new Promise((resolve) => {
-        const socket = new WebSocket(url);
-        const timeout = setTimeout(() => {
-          socket.close();
-          resolve(false);
-        }, 5000);
+    return await publishToRelays(signedEvent);
+  } catch (e) {
+    console.error('Failed to sign/post event', e);
+    return false;
+  }
+}
 
-        socket.onopen = () => {
-          socket.send(JSON.stringify(['EVENT', signedEvent]));
-        };
+export async function postPatternToNostr(pubkey: string, patternName: string) {
+  if (!window.nostr) return false;
 
-        socket.onmessage = (msg) => {
-          try {
-            const data = JSON.parse(msg.data);
-            if (data[0] === 'OK' && data[1] === signedEvent.id) {
-              clearTimeout(timeout);
-              socket.close();
-              resolve(true);
-            }
-          } catch (e) {
-            // Ignore parse errors
-          }
-        };
+  const content = `🧘‍♂️ I just made "${patternName}", a breathing pattern on Relaxy! Try it out: ${window.location.origin}\n\n#breathwork #chillstr #relaxy`;
 
-        socket.onerror = () => {
-          clearTimeout(timeout);
-          resolve(false);
-        };
-      });
-    });
+  const eventTemplate: EventTemplate = {
+    kind: 1,
+    created_at: Math.floor(Date.now() / 1000),
+    tags: [
+      ['t', 'breathwork'],
+      ['t', 'chillstr'],
+      ['t', 'relaxy'],
+      ['p', pubkey]
+    ],
+    content,
+  };
 
-    // We consider it a success if at least one relay accepted it
-    const results = await Promise.all(publishPromises);
-    return results.some(r => r === true);
+  try {
+    const signedEvent = await window.nostr.signEvent(eventTemplate);
+    return await publishToRelays(signedEvent);
+  } catch (e) {
+    console.error('Failed to sign/post event', e);
+    return false;
+  }
+}
+
+export async function postAchievementToNostr(pubkey: string, achievementName: string) {
+  if (!window.nostr) return false;
+
+  const content = `🌳 I just completed my first full tree session on Relaxyz! 🧘‍♂️\n\nAchievement Unlocked: ${achievementName}\n\nJoin me in breathing: ${window.location.origin}\n\n#breathwork #chillstr #relaxy #achievement`;
+
+  const eventTemplate: EventTemplate = {
+    kind: 1,
+    created_at: Math.floor(Date.now() / 1000),
+    tags: [
+      ['t', 'breathwork'],
+      ['t', 'chillstr'],
+      ['t', 'relaxy'],
+      ['t', 'achievement'],
+      ['p', pubkey]
+    ],
+    content,
+  };
+
+  try {
+    const signedEvent = await window.nostr.signEvent(eventTemplate);
+    return await publishToRelays(signedEvent);
   } catch (e) {
     console.error('Failed to sign/post event', e);
     return false;
