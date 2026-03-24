@@ -1,5 +1,5 @@
 {
-  "name": "Copy of Relaxyz",
-  "description": "A paced breathing and breathwork app integrated with the Nostr protocol for social accountability and login via Amber.",
+  "name": "Relaxyz (Beta)",
+  "description": "A paced breathing and breathwork app. (Beta: All data is stored locally in your browser).",
   "requestFramePermissions": []
 }

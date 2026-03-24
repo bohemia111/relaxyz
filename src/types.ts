@@ -30,14 +30,6 @@ export interface Session {
   pubkey?: string;
 }
 
-export interface PublicSession {
-  id: string;
-  timestamp: number;
-  duration: number;
-  pattern: string;
-  pubkey: string;
-}
-
 export interface WeeklyPlan {
   days: { [key: string]: boolean };
   dailyGoalMinutes: number;

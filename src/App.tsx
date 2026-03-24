@@ -49,7 +49,7 @@ import {
   Cell 
 } from 'recharts';
 import confetti from 'canvas-confetti';
-import { BREATHING_PATTERNS, BreathingPattern, BreathingPhase, SoundType, SOUND_OPTIONS, Session, WeeklyPlan, PublicSession } from './types';
+import { BREATHING_PATTERNS, BreathingPattern, BreathingPhase, SoundType, SOUND_OPTIONS, Session, WeeklyPlan } from './types';
 import { loginWithNostr, postSessionToNostr, postPatternToNostr, postAchievementToNostr } from './nostr';
 
 const ACHIEVEMENTS = [
@@ -357,9 +357,7 @@ export default function App() {
       dailyGoalMinutes: 5
     };
   });
-  const [publicSessions, setPublicSessions] = useState<PublicSession[]>([]);
   const [profileUser, setProfileUser] = useState<string | null>(null);
-  const socketRef = useRef<WebSocket | null>(null);
   const [dailyGoal, setDailyGoal] = useState(() => {
     return parseInt(localStorage.getItem('relaxyz_goal_daily') || '10');
   });
@@ -800,28 +798,6 @@ export default function App() {
     localStorage.setItem('nostr-breath-custom', JSON.stringify(updated));
   };
 
-  // WebSocket connection
-  useEffect(() => {
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const socket = new WebSocket(`${protocol}//${window.location.host}`);
-    socketRef.current = socket;
-
-    socket.onmessage = (event) => {
-      try {
-        const payload = JSON.parse(event.data);
-        if (payload.type === 'INIT_SESSIONS' || payload.type === 'SESSION_LOG_UPDATE') {
-          setPublicSessions(payload.data);
-        }
-      } catch (e) {
-        console.error('WS Error:', e);
-      }
-    };
-
-    return () => {
-      socket.close();
-    };
-  }, []);
-
   // Handle Login
   const handleLogin = async () => {
     const key = await loginWithNostr();
@@ -880,18 +856,6 @@ export default function App() {
       
       const updatedSessions = [...sessions, newSession];
       setSessions(updatedSessions);
-
-      // Broadcast to public log
-      if (socketRef.current?.readyState === WebSocket.OPEN) {
-        socketRef.current.send(JSON.stringify({
-          type: 'NEW_SESSION',
-          data: {
-            duration,
-            pattern: selectedPattern.name,
-            pubkey: pubkey || 'Anonymous'
-          }
-        }));
-      }
 
       // Achievement Logic
       const newEarned = new Set(earnedAchievements);
@@ -1230,7 +1194,10 @@ export default function App() {
                   <div className="p-2 rounded-xl bg-emerald-500/10">
                     <TrendingUp className="w-6 h-6 text-emerald-400" />
                   </div>
-                  <h2 className="text-2xl font-display font-bold">My Progress</h2>
+                  <div className="flex flex-col">
+                    <h2 className="text-2xl font-display font-bold">My Progress <span className="text-xs font-sans font-normal text-amber-500 ml-2 px-2 py-0.5 bg-amber-500/10 rounded-full">Beta</span></h2>
+                    <p className="text-[10px] text-neutral-500 font-medium">Data is stored locally in your browser</p>
+                  </div>
                 </div>
                 <div className="flex items-center gap-2">
                   <button 
@@ -2093,7 +2060,10 @@ export default function App() {
                 className="w-full max-w-md bg-neutral-900 border border-neutral-800 p-8 rounded-3xl shadow-2xl max-h-[90vh] overflow-y-auto custom-scrollbar"
               >
               <div className="flex justify-between items-center mb-8">
-                <h2 className="text-2xl font-display font-bold">Your Goals</h2>
+                <div className="flex flex-col">
+                  <h2 className="text-2xl font-display font-bold">Your Goals <span className="text-xs font-sans font-normal text-amber-500 ml-2 px-2 py-0.5 bg-amber-500/10 rounded-full">Beta</span></h2>
+                  <p className="text-[10px] text-neutral-500 font-medium">Data is stored locally in your browser</p>
+                </div>
                 <button onClick={() => setShowGoals(false)} className="text-neutral-500 hover:text-white">
                   <X className="w-6 h-6" />
                 </button>
@@ -2328,47 +2298,6 @@ export default function App() {
           )}
         </AnimatePresence>
         </div>
-
-        {/* Public Session Log Sidebar */}
-        {!selectedPattern && !showProgress && !isCreating && (
-          <motion.div
-            initial={{ opacity: 0, x: 20 }}
-            animate={{ opacity: 1, x: 0 }}
-            className="hidden lg:flex flex-col w-72 bg-neutral-900 border border-neutral-800 rounded-3xl p-6 h-fit sticky top-6"
-          >
-            <div className="flex items-center gap-2 mb-6">
-              <Users className="w-5 h-5 text-blue-400" />
-              <h3 className="text-sm font-bold uppercase tracking-widest text-neutral-400">Public Log</h3>
-            </div>
-            <div className="space-y-4">
-              {publicSessions.length > 0 ? (
-                publicSessions.map((s) => (
-                  <div key={s.id} className="flex flex-col gap-1 p-3 bg-neutral-800/30 rounded-xl border border-neutral-800/50">
-                    <div className="flex justify-between items-center">
-                      <button 
-                        onClick={() => setProfileUser(s.pubkey)}
-                        className="text-[10px] font-mono text-blue-400 hover:underline truncate max-w-[120px]"
-                      >
-                        {s.pubkey === 'Anonymous' ? 'Anonymous' : `${s.pubkey.slice(0, 6)}...${s.pubkey.slice(-4)}`}
-                      </button>
-                      <span className="text-[9px] text-neutral-600">
-                        {new Date(s.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                      </span>
-                    </div>
-                    <div className="flex justify-between items-center">
-                      <span className="text-[11px] font-medium text-white">{s.pattern}</span>
-                      <span className="text-[10px] text-neutral-500">{Math.floor(s.duration / 60)}m {s.duration % 60}s</span>
-                    </div>
-                  </div>
-                ))
-              ) : (
-                <div className="text-center py-8 text-neutral-600 italic text-xs">
-                  Waiting for sessions...
-                </div>
-              )}
-            </div>
-          </motion.div>
-        )}
       </main>
 
       {/* Profile Modal */}
@@ -2415,10 +2344,7 @@ export default function App() {
                           const totalSecs = sessions.reduce((acc, s) => acc + s.duration, 0);
                           return `${Math.floor(totalSecs / 60)}m`;
                         }
-                        // For others, we might only have the last few sessions from the log
-                        const userSessions = publicSessions.filter(s => s.pubkey === profileUser);
-                        const totalSecs = userSessions.reduce((acc, s) => acc + s.duration, 0);
-                        return `${Math.floor(totalSecs / 60)}m+`;
+                        return '0m';
                       })()}
                     </div>
                   </div>
