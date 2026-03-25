@@ -398,17 +398,78 @@ export default function App() {
     localStorage.setItem('relaxyz_sessions', JSON.stringify(sessions));
   }, [sessions]);
 
+  const syncWithNostr = async (key: string) => {
+    // Fetch profile metadata for the user
+    const profiles = await fetchNostrProfiles([key]);
+    if (profiles[key]) {
+      setNostrProfiles(prev => ({ ...prev, ...profiles }));
+    }
+    
+    // Restore history from Nostr
+    const events = await fetchHistoryFromNostr(key);
+    if (events.length > 0) {
+      const restoredSessions: Session[] = [];
+      const restoredAchievements = new Set(earnedAchievements);
+      const restoredPatterns: BreathingPattern[] = [];
+      
+      events.forEach(event => {
+        const durationTag = event.tags.find((t: string[]) => t[0] === 'duration');
+        const patternTag = event.tags.find((t: string[]) => t[0] === 'pattern');
+        const achievementTag = event.tags.find((t: string[]) => t[0] === 'achievement');
+        const patternDataTag = event.tags.find((t: string[]) => t[0] === 'pattern_data');
+        
+        if (durationTag && patternTag) {
+          restoredSessions.push({
+            id: event.id,
+            timestamp: event.created_at * 1000,
+            duration: parseInt(durationTag[1]),
+            pattern: patternTag[1],
+            pubkey: key
+          });
+        }
+        
+        if (achievementTag) {
+          restoredAchievements.add(achievementTag[1]);
+        }
+
+        if (patternDataTag) {
+          try {
+            restoredPatterns.push(JSON.parse(patternDataTag[1]));
+          } catch (e) {
+            console.error('Failed to parse pattern data', e);
+          }
+        }
+      });
+      
+      if (restoredSessions.length > 0) {
+        setSessions(prev => {
+          const existingIds = new Set(prev.map(s => s.id));
+          const newOnes = restoredSessions.filter(s => !existingIds.has(s.id));
+          return [...prev, ...newOnes].sort((a, b) => a.timestamp - b.timestamp);
+        });
+      }
+      
+      if (restoredAchievements.size > earnedAchievements.size) {
+        setEarnedAchievements(restoredAchievements);
+        localStorage.setItem('relaxyz_achievements', JSON.stringify(Array.from(restoredAchievements)));
+      }
+
+      if (restoredPatterns.length > 0) {
+        setCustomPatterns(prev => {
+          const existingIds = new Set(prev.map(p => p.id));
+          const newOnes = restoredPatterns.filter(p => !existingIds.has(p.id));
+          const updated = [...prev, ...newOnes];
+          localStorage.setItem('nostr-breath-custom', JSON.stringify(updated));
+          return updated;
+        });
+      }
+    }
+  };
+
   useEffect(() => {
     if (pubkey) {
       localStorage.setItem('relaxyz_pubkey', pubkey);
-      // Fetch profile if not already in nostrProfiles
-      if (!nostrProfiles[pubkey]) {
-        fetchNostrProfiles([pubkey]).then(profiles => {
-          if (profiles[pubkey]) {
-            setNostrProfiles(prev => ({ ...prev, ...profiles }));
-          }
-        });
-      }
+      syncWithNostr(pubkey);
     } else {
       localStorage.removeItem('relaxyz_pubkey');
     }
@@ -440,11 +501,18 @@ export default function App() {
     return current;
   };
 
+  const userSessions = useMemo(() => {
+    if (pubkey) {
+      return sessions.filter(s => s.pubkey === pubkey);
+    }
+    return sessions.filter(s => !s.pubkey || s.pubkey === 'Anonymous');
+  }, [sessions, pubkey]);
+
   const { currentStreak, bestStreak, totalTime, totalSessions } = useMemo(() => {
-    const current = calculateStreak(sessions);
+    const current = calculateStreak(userSessions);
     
     // Best streak
-    const dates = Array.from(new Set(sessions.map(s => new Date(s.timestamp).toDateString())))
+    const dates = Array.from(new Set(userSessions.map(s => new Date(s.timestamp).toDateString())))
       .map((d: string) => new Date(d).getTime())
       .sort((a, b) => a - b);
       
@@ -463,11 +531,11 @@ export default function App() {
       best = Math.max(best, temp);
     }
     
-    const totalTime = sessions.reduce((acc, s) => acc + s.duration, 0);
-    const totalSessions = sessions.length;
+    const totalTime = userSessions.reduce((acc, s) => acc + s.duration, 0);
+    const totalSessions = userSessions.length;
     
     return { currentStreak: current, bestStreak: best, totalTime, totalSessions };
-  }, [sessions]);
+  }, [userSessions]);
 
   useEffect(() => {
     if (!profileUser) {
@@ -536,7 +604,7 @@ export default function App() {
         const hour = i % 12 || 12;
         const ampm = i < 12 ? 'a' : 'p';
         const label = `${hour}${ampm}`;
-        const value = sessions
+        const value = userSessions
           .filter(s => s.timestamp >= hourStart.getTime() && s.timestamp < hourEnd.getTime())
           .reduce((acc, s) => acc + s.duration, 0);
         data.push({ name: label, value: Math.round(value / 60) });
@@ -551,7 +619,7 @@ export default function App() {
         const day = new Date(start);
         day.setDate(start.getDate() + i);
         const label = day.toLocaleDateString('en-US', { weekday: 'short', month: 'numeric', day: 'numeric' });
-        const value = sessions
+        const value = userSessions
           .filter(s => new Date(s.timestamp).toDateString() === day.toDateString())
           .reduce((acc, s) => acc + s.duration, 0);
         data.push({ name: label, value: Math.round(value / 60) });
@@ -564,7 +632,7 @@ export default function App() {
       for (let i = 1; i <= endOfMonth.getDate(); i++) {
         const day = new Date(ref.getFullYear(), ref.getMonth(), i);
         const label = i.toString();
-        const value = sessions
+        const value = userSessions
           .filter(s => new Date(s.timestamp).toDateString() === day.toDateString())
           .reduce((acc, s) => acc + s.duration, 0);
         data.push({ name: label, value: Math.round(value / 60) });
@@ -573,7 +641,7 @@ export default function App() {
       // All months in the selected year
       for (let i = 0; i < 12; i++) {
         const label = new Date(ref.getFullYear(), i).toLocaleDateString('en-US', { month: 'short' });
-        const value = sessions
+        const value = userSessions
           .filter(s => {
             const sd = new Date(s.timestamp);
             return sd.getMonth() === i && sd.getFullYear() === ref.getFullYear();
@@ -582,8 +650,8 @@ export default function App() {
         data.push({ name: label, value: Math.round(value / 60) });
       }
     } else {
-      if (sessions.length === 0) return [];
-      const firstSession = Math.min(...sessions.map(s => s.timestamp));
+      if (userSessions.length === 0) return [];
+      const firstSession = Math.min(...userSessions.map(s => s.timestamp));
       const start = new Date(Math.max(firstSession, SITE_START_DATE.getTime()));
       start.setDate(1);
       const end = new Date();
@@ -591,7 +659,7 @@ export default function App() {
       let curr = new Date(start);
       while (curr <= end) {
         const label = curr.toLocaleDateString('en-US', { month: 'short', year: '2-digit' });
-        const value = sessions
+        const value = userSessions
           .filter(s => {
             const sd = new Date(s.timestamp);
             return sd.getMonth() === curr.getMonth() && sd.getFullYear() === curr.getFullYear();
@@ -603,7 +671,7 @@ export default function App() {
     }
     
     return data;
-  }, [sessions, activityTimeframe, referenceDate, SITE_START_DATE]);
+  }, [userSessions, activityTimeframe, referenceDate, SITE_START_DATE]);
 
   const phaseScales = useMemo(() => {
     if (!selectedPattern) return [];
@@ -912,72 +980,7 @@ export default function App() {
     const key = await loginWithNostr();
     if (key) {
       setPubkey(key);
-      
-      // Fetch profile metadata for the user
-      const profiles = await fetchNostrProfiles([key]);
-      if (profiles[key]) {
-        setNostrProfiles(prev => ({ ...prev, ...profiles }));
-      }
-      
-      // Restore history from Nostr
-      const events = await fetchHistoryFromNostr(key);
-      if (events.length > 0) {
-        const restoredSessions: Session[] = [];
-        const restoredAchievements = new Set(earnedAchievements);
-        const restoredPatterns: BreathingPattern[] = [];
-        
-        events.forEach(event => {
-          const durationTag = event.tags.find((t: string[]) => t[0] === 'duration');
-          const patternTag = event.tags.find((t: string[]) => t[0] === 'pattern');
-          const achievementTag = event.tags.find((t: string[]) => t[0] === 'achievement');
-          const patternDataTag = event.tags.find((t: string[]) => t[0] === 'pattern_data');
-          
-          if (durationTag && patternTag) {
-            restoredSessions.push({
-              id: event.id,
-              timestamp: event.created_at * 1000,
-              duration: parseInt(durationTag[1]),
-              pattern: patternTag[1],
-              pubkey: key
-            });
-          }
-          
-          if (achievementTag) {
-            restoredAchievements.add(achievementTag[1]);
-          }
-
-          if (patternDataTag) {
-            try {
-              restoredPatterns.push(JSON.parse(patternDataTag[1]));
-            } catch (e) {
-              console.error('Failed to parse pattern data', e);
-            }
-          }
-        });
-        
-        if (restoredSessions.length > 0) {
-          setSessions(prev => {
-            const existingIds = new Set(prev.map(s => s.id));
-            const newOnes = restoredSessions.filter(s => !existingIds.has(s.id));
-            return [...prev, ...newOnes].sort((a, b) => a.timestamp - b.timestamp);
-          });
-        }
-        
-        if (restoredAchievements.size > earnedAchievements.size) {
-          setEarnedAchievements(restoredAchievements);
-          localStorage.setItem('relaxyz_achievements', JSON.stringify(Array.from(restoredAchievements)));
-        }
-
-        if (restoredPatterns.length > 0) {
-          setCustomPatterns(prev => {
-            const existingIds = new Set(prev.map(p => p.id));
-            const newOnes = restoredPatterns.filter(p => !existingIds.has(p.id));
-            const updated = [...prev, ...newOnes];
-            localStorage.setItem('nostr-breath-custom', JSON.stringify(updated));
-            return updated;
-          });
-        }
-      }
+      syncWithNostr(key);
     }
   };
 
@@ -1842,7 +1845,7 @@ export default function App() {
               <div className="mt-8">
                 <h3 className="text-sm font-bold uppercase tracking-widest text-neutral-400 mb-4">Recent Sessions</h3>
                 <div className="space-y-3">
-                  {sessions.slice(-20).reverse().map((s) => (
+                  {userSessions.slice(-20).reverse().map((s) => (
                     <div key={s.id} className="flex justify-between items-center p-4 bg-neutral-800/20 rounded-xl border border-neutral-800/50">
                       <div className="flex items-center gap-3">
                         <div className="p-2 rounded-lg bg-blue-500/10">
@@ -1860,7 +1863,7 @@ export default function App() {
                       </div>
                     </div>
                   ))}
-                  {sessions.length === 0 && (
+                  {userSessions.length === 0 && (
                     <div className="text-center py-8 text-neutral-600 italic text-sm">
                       No sessions recorded yet. Start breathing!
                     </div>
@@ -2548,7 +2551,7 @@ export default function App() {
                   <h3 className="text-xs font-bold uppercase tracking-widest text-neutral-400 mb-4">Today's Progress</h3>
                   {(() => {
                     const today = new Date().toDateString();
-                    const todaySeconds = sessions
+                    const todaySeconds = userSessions
                       .filter(s => new Date(s.timestamp).toDateString() === today)
                       .reduce((acc, s) => acc + s.duration, 0);
                     const todayMinutes = Math.floor(todaySeconds / 60);
