@@ -1,4 +1,14 @@
 import { type EventTemplate } from 'nostr-tools/pure';
+import { nip19 } from 'nostr-tools';
+
+export function getShortNpub(pubkey: string): string {
+  try {
+    const npub = nip19.npubEncode(pubkey);
+    return `${npub.slice(0, 8)}...${npub.slice(-4)}`;
+  } catch (e) {
+    return `${pubkey.slice(0, 8)}...${pubkey.slice(-4)}`;
+  }
+}
 
 export async function loginWithNostr(): Promise<string | null> {
   // Amber and other NIP-07 extensions inject window.nostr
@@ -9,8 +19,14 @@ export async function loginWithNostr(): Promise<string | null> {
   try {
     const pubkey = await window.nostr.getPublicKey();
     return pubkey;
-  } catch (e) {
-    console.error('Login failed', e);
+  } catch (e: any) {
+    if (e?.message?.includes('denied') || e?.toString()?.includes('denied')) {
+      console.log('Login request was denied by the user.');
+      // Don't alert for a simple denial, it's expected user behavior
+    } else {
+      console.error('Login failed', e);
+      alert(`Login failed: ${e?.message || e?.toString() || 'Unknown error'}`);
+    }
     return null;
   }
 }
@@ -148,6 +164,31 @@ export async function postAchievementToNostr(pubkey: string, achievementName: st
   } catch (e) {
     console.error('Failed to sign/post event', e);
     return false;
+  }
+}
+
+export async function postSessionToServerNostr(sessionData: { pattern: string, duration: number }, userPubkey?: string) {
+  try {
+    const response = await fetch('/api/nostr/post-session', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        sessionData,
+        userPubkey
+      }),
+    });
+    
+    if (!response.ok) {
+      const error = await response.json();
+      return { success: false, error: error.error, details: error.details };
+    }
+    
+    return { success: true, ...(await response.json()) };
+  } catch (e: any) {
+    console.error('Server post failed', e);
+    return { success: false, error: e.message || 'Unknown error' };
   }
 }
 
@@ -329,6 +370,54 @@ export async function fetchPublicSessions(): Promise<any[]> {
     socket.onerror = () => {
       clearTimeout(timeout);
       resolve(events);
+    };
+  });
+}
+
+export async function fetchNostrProfiles(pubkeys: string[]): Promise<Record<string, any>> {
+  if (pubkeys.length === 0) return {};
+  const relay = 'wss://relay.damus.io';
+  
+  return new Promise((resolve) => {
+    const socket = new WebSocket(relay);
+    const profiles: Record<string, any> = {};
+    const timeout = setTimeout(() => {
+      socket.close();
+      resolve(profiles);
+    }, 5000);
+
+    socket.onopen = () => {
+      const filter = {
+        kinds: [0],
+        authors: pubkeys
+      };
+      socket.send(JSON.stringify(['REQ', 'profiles', filter]));
+    };
+
+    socket.onmessage = (msg) => {
+      try {
+        const data = JSON.parse(msg.data);
+        if (data[0] === 'EVENT' && data[1] === 'profiles') {
+          const event = data[2];
+          try {
+            const metadata = JSON.parse(event.content);
+            profiles[event.pubkey] = metadata;
+          } catch (e) {
+            // Ignore
+          }
+        } else if (data[0] === 'EOSE' && data[1] === 'profiles') {
+          clearTimeout(timeout);
+          socket.close();
+          resolve(profiles);
+        }
+      } catch (e) {
+        // Ignore
+      }
+    };
+
+    socket.onerror = () => {
+      clearTimeout(timeout);
+      resolve(profiles);
     };
   });
 }

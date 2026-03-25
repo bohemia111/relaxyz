@@ -50,7 +50,7 @@ import {
 } from 'recharts';
 import confetti from 'canvas-confetti';
 import { BREATHING_PATTERNS, BreathingPattern, BreathingPhase, SoundType, SOUND_OPTIONS, Session, WeeklyPlan } from './types';
-import { loginWithNostr, postSessionToNostr, postPatternToNostr, postAchievementToNostr, postStatsToNostr, fetchHistoryFromNostr, fetchPublicSessions } from './nostr';
+import { loginWithNostr, postSessionToNostr, postPatternToNostr, postAchievementToNostr, postStatsToNostr, postSessionToServerNostr, fetchHistoryFromNostr, fetchPublicSessions, fetchNostrProfiles, getShortNpub } from './nostr';
 
 const ACHIEVEMENTS = [
   { id: 'first_breath', name: 'First Breath', description: 'Complete your first session', icon: <Wind className="w-4 h-4" /> },
@@ -385,6 +385,7 @@ export default function App() {
     return parseInt(localStorage.getItem('relaxyz_total_shares') || '0');
   });
   const [publicSessions, setPublicSessions] = useState<any[]>([]);
+  const [nostrProfiles, setNostrProfiles] = useState<Record<string, any>>({});
   const [isLoadingPublic, setIsLoadingPublic] = useState(false);
 
   const SITE_START_DATE = useMemo(() => new Date('2026-03-20'), []);
@@ -817,7 +818,16 @@ export default function App() {
     const loadPublic = async () => {
       setIsLoadingPublic(true);
       const sessions = await fetchPublicSessions();
-      setPublicSessions(sessions.sort((a, b) => b.created_at - a.created_at).slice(0, 10));
+      const sorted = sessions.sort((a, b) => b.created_at - a.created_at).slice(0, 10);
+      setPublicSessions(sorted);
+      
+      // Fetch profiles for these pubkeys
+      const pubkeys = Array.from(new Set(sorted.map(s => s.pubkey)));
+      if (pubkeys.length > 0) {
+        const profiles = await fetchNostrProfiles(pubkeys);
+        setNostrProfiles(prev => ({ ...prev, ...profiles }));
+      }
+      
       setIsLoadingPublic(false);
     };
     loadPublic();
@@ -998,6 +1008,18 @@ export default function App() {
       
       const updatedSessions = [...sessions, newSession];
       setSessions(updatedSessions);
+
+      // Post to server-side Nostr if configured and user is logged in
+      if (pubkey) {
+        postSessionToServerNostr({
+          pattern: selectedPattern.name,
+          duration
+        }, pubkey).then(res => {
+          if (!res.success && res.error === "Nostr bridge not configured") {
+            console.warn("Nostr Bridge Setup Required: Please add NOSTR_NSEC to the environment variables in the Settings menu.");
+          }
+        });
+      }
 
       // Achievement Logic
       const newEarned = new Set(earnedAchievements);
@@ -2144,19 +2166,35 @@ export default function App() {
                     publicSessions.map((session, idx) => (
                       <button
                         key={session.id || idx}
-                        onClick={() => setProfileUser(session.pubkey)}
+                        onClick={() => {
+                          setProfileUser(session.pubkey);
+                          if (!nostrProfiles[session.pubkey]) {
+                            fetchNostrProfiles([session.pubkey]).then(p => {
+                              setNostrProfiles(prev => ({ ...prev, ...p }));
+                            });
+                          }
+                        }}
                         className="w-full p-4 flex items-center justify-between hover:bg-white/5 transition-colors group text-left"
                       >
                         <div className="flex items-center gap-3">
-                          <div className="w-10 h-10 rounded-full bg-neutral-800 flex items-center justify-center text-neutral-400 group-hover:bg-neutral-700 transition-colors">
-                            <User className="w-5 h-5" />
+                          <div className="w-10 h-10 rounded-full bg-neutral-800 flex items-center justify-center text-neutral-400 group-hover:bg-neutral-700 transition-colors overflow-hidden">
+                            {nostrProfiles[session.pubkey]?.picture ? (
+                              <img 
+                                src={nostrProfiles[session.pubkey].picture} 
+                                alt="" 
+                                className="w-full h-full object-cover"
+                                referrerPolicy="no-referrer"
+                              />
+                            ) : (
+                              <User className="w-5 h-5" />
+                            )}
                           </div>
                           <div>
                             <div className="text-sm font-medium text-white">
-                              {session.pubkey.slice(0, 8)}...{session.pubkey.slice(-4)}
+                              {nostrProfiles[session.pubkey]?.display_name || nostrProfiles[session.pubkey]?.name || getShortNpub(session.pubkey)}
                             </div>
                             <div className="text-xs text-neutral-500">
-                              {Math.floor(session.duration / 60)}m session • {new Date(session.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                              {Math.floor(session.duration / 60)}m session • {new Date(session.created_at * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                             </div>
                           </div>
                         </div>
@@ -2640,13 +2678,24 @@ export default function App() {
               <div className="relative z-10">
                 <div className="flex justify-between items-start mb-8">
                   <div className="flex items-center gap-4">
-                    <div className="w-16 h-16 bg-gradient-to-br from-blue-600 to-indigo-600 rounded-2xl flex items-center justify-center shadow-xl">
-                      <User className="w-8 h-8 text-white" />
+                    <div className="w-16 h-16 bg-gradient-to-br from-blue-600 to-indigo-600 rounded-2xl flex items-center justify-center shadow-xl overflow-hidden">
+                      {nostrProfiles[profileUser]?.picture ? (
+                        <img 
+                          src={nostrProfiles[profileUser].picture} 
+                          alt="" 
+                          className="w-full h-full object-cover"
+                          referrerPolicy="no-referrer"
+                        />
+                      ) : (
+                        <User className="w-8 h-8 text-white" />
+                      )}
                     </div>
                     <div>
-                      <h2 className="text-xl font-display font-bold text-white">Breathworker Profile</h2>
+                      <h2 className="text-xl font-display font-bold text-white">
+                        {nostrProfiles[profileUser]?.display_name || nostrProfiles[profileUser]?.name || 'Breathworker Profile'}
+                      </h2>
                       <p className="text-xs font-mono text-neutral-500 mt-1">
-                        {profileUser === 'Anonymous' ? 'Anonymous' : `${profileUser.slice(0, 12)}...${profileUser.slice(-8)}`}
+                        {profileUser === 'Anonymous' ? 'Anonymous' : getShortNpub(profileUser)}
                       </p>
                     </div>
                   </div>
