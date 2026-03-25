@@ -114,7 +114,7 @@ export async function postSessionToNostr(pubkey: string, sessionData: { pattern:
 export async function postPatternToNostr(pubkey: string, pattern: any) {
   if (!window.nostr) return false;
 
-  const content = `🧘‍♂️ I just made "${pattern.name}", a breathing pattern on Relaxy! Try it out: ${window.location.origin}\n\n#breathwork #chillstr #relaxy #relaxyz`;
+  const content = `🧘‍♂️ I just made "${pattern.name}", a breathing pattern on Relaxy! Try it out: ${window.location.origin}\n\n#breathwork #chillstr #relaxyz`;
 
   const eventTemplate: EventTemplate = {
     kind: 1,
@@ -122,7 +122,6 @@ export async function postPatternToNostr(pubkey: string, pattern: any) {
     tags: [
       ['t', 'breathwork'],
       ['t', 'chillstr'],
-      ['t', 'relaxy'],
       ['t', 'relaxyz'],
       ['p', pubkey],
       ['pattern_data', JSON.stringify(pattern)]
@@ -142,7 +141,7 @@ export async function postPatternToNostr(pubkey: string, pattern: any) {
 export async function postAchievementToNostr(pubkey: string, achievementName: string) {
   if (!window.nostr) return false;
 
-  const content = `🌳 I just completed my first full tree session on Relaxyz! 🧘‍♂️\n\nAchievement Unlocked: ${achievementName}\n\nJoin me in breathing: ${window.location.origin}\n\n#breathwork #chillstr #relaxy #achievement #relaxyz`;
+  const content = `🌳 I just completed my first full tree session on Relaxyz! 🧘‍♂️\n\nAchievement Unlocked: ${achievementName}\n\nJoin me in breathing: ${window.location.origin}\n\n#breathwork #chillstr #achievement #relaxyz`;
 
   const eventTemplate: EventTemplate = {
     kind: 1,
@@ -150,7 +149,6 @@ export async function postAchievementToNostr(pubkey: string, achievementName: st
     tags: [
       ['t', 'breathwork'],
       ['t', 'chillstr'],
-      ['t', 'relaxy'],
       ['t', 'relaxyz'],
       ['p', pubkey],
       ['achievement', achievementName]
@@ -167,7 +165,7 @@ export async function postAchievementToNostr(pubkey: string, achievementName: st
   }
 }
 
-export async function postSessionToServerNostr(sessionData: { pattern: string, duration: number }, userPubkey?: string) {
+export async function postSessionToServerNostr(fullState: any, userPubkey?: string) {
   try {
     const response = await fetch('/api/nostr/post-session', {
       method: 'POST',
@@ -175,7 +173,7 @@ export async function postSessionToServerNostr(sessionData: { pattern: string, d
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        sessionData,
+        fullState,
         userPubkey
       }),
     });
@@ -224,23 +222,23 @@ export async function postStatsToNostr(pubkey: string, stats: { totalTime: numbe
   }
 }
 
-export async function fetchHistoryFromNostr(pubkey: string): Promise<any[]> {
+export async function fetchHistoryFromNostr(pubkey: string): Promise<any | null> {
   const relay = 'wss://relaxy.nostr1.com';
   
   return new Promise((resolve) => {
     const socket = new WebSocket(relay);
-    const events: any[] = [];
+    let latestEvent: any = null;
     const timeout = setTimeout(() => {
       socket.close();
-      resolve(events);
+      resolve(null);
     }, 5000);
 
     socket.onopen = () => {
       const filter = {
         kinds: [1],
         authors: [pubkey],
-        '#t': ['relaxyz'],
-        limit: 100
+        '#t': ['relaxy'],
+        limit: 1 // Only need the latest state snapshot
       };
       socket.send(JSON.stringify(['REQ', 'history', filter]));
     };
@@ -249,42 +247,33 @@ export async function fetchHistoryFromNostr(pubkey: string): Promise<any[]> {
       try {
         const data = JSON.parse(msg.data);
         if (data[0] === 'EVENT' && data[1] === 'history') {
-          events.push(data[2]);
+          latestEvent = data[2];
         } else if (data[0] === 'EOSE' && data[1] === 'history') {
           clearTimeout(timeout);
           socket.close();
           
-          // Mock data for demo users
-          if (events.length === 0) {
-            if (pubkey === 'npub1v7v...xyz789') {
-              resolve([
-                {
-                  id: 'mock1',
-                  pubkey: 'npub1v7v...xyz789',
-                  created_at: Math.floor(Date.now() / 1000) - 300,
-                  tags: [['duration', '600'], ['pattern', 'Box Breathing'], ['t', 'relaxyz']],
-                  content: '🧘‍♂️ Just finished a 10 min session!'
-                },
-                {
-                  id: 'mock4',
-                  pubkey: 'npub1v7v...xyz789',
-                  created_at: Math.floor(Date.now() / 1000) - 86400,
-                  tags: [['duration', '600'], ['pattern', 'Box Breathing'], ['t', 'relaxyz']],
-                  content: 'Daily breath.'
-                },
-                {
-                  id: 'mock_ach1',
-                  pubkey: 'npub1v7v...xyz789',
-                  created_at: Math.floor(Date.now() / 1000) - 86400,
-                  tags: [['achievement', 'first_breath'], ['t', 'relaxyz']],
-                  content: 'Unlocked achievement!'
-                }
-              ]);
-            } else {
-              resolve(events);
+          if (latestEvent) {
+            try {
+              const state = JSON.parse(latestEvent.content);
+              resolve(state);
+            } catch (e) {
+              console.error('Failed to parse state snapshot', e);
+              resolve(null);
             }
           } else {
-            resolve(events);
+            // Mock data for demo users if no real data exists
+            if (pubkey === 'npub1v7v...xyz789') {
+              resolve({
+                sessions: [
+                  { id: 'mock1', timestamp: Date.now() - 300000, duration: 600, pattern: 'Box Breathing', pubkey },
+                  { id: 'mock4', timestamp: Date.now() - 86400000, duration: 600, pattern: 'Box Breathing', pubkey }
+                ],
+                earnedAchievements: ['first_breath'],
+                customPatterns: []
+              });
+            } else {
+              resolve(null);
+            }
           }
         }
       } catch (e) {
@@ -294,7 +283,7 @@ export async function fetchHistoryFromNostr(pubkey: string): Promise<any[]> {
 
     socket.onerror = () => {
       clearTimeout(timeout);
-      resolve(events);
+      resolve(null);
     };
   });
 }
@@ -313,7 +302,7 @@ export async function fetchPublicSessions(): Promise<any[]> {
     socket.onopen = () => {
       const filter = {
         kinds: [1],
-        '#t': ['relaxyz'],
+        '#t': ['relaxy'],
         limit: 50
       };
       socket.send(JSON.stringify(['REQ', 'public_history', filter]));
@@ -339,21 +328,21 @@ export async function fetchPublicSessions(): Promise<any[]> {
                 id: 'mock1',
                 pubkey: 'npub1v7v...xyz789',
                 created_at: Math.floor(Date.now() / 1000) - 300,
-                tags: [['duration', '600'], ['pattern', 'Box Breathing'], ['t', 'relaxyz']],
+                tags: [['duration', '600'], ['pattern', 'Box Breathing'], ['t', 'relaxy']],
                 content: '🧘‍♂️ Just finished a 10 min session!'
               },
               {
                 id: 'mock2',
                 pubkey: 'npub1abc...def123',
                 created_at: Math.floor(Date.now() / 1000) - 3600,
-                tags: [['duration', '300'], ['pattern', '4-7-8'], ['t', 'relaxyz']],
+                tags: [['duration', '300'], ['pattern', '4-7-8'], ['t', 'relaxy']],
                 content: 'Feeling relaxed.'
               },
               {
                 id: 'mock3',
                 pubkey: 'npub1pqr...stu456',
                 created_at: Math.floor(Date.now() / 1000) - 7200,
-                tags: [['duration', '900'], ['pattern', 'Deep Calm'], ['t', 'relaxyz']],
+                tags: [['duration', '900'], ['pattern', 'Deep Calm'], ['t', 'relaxy']],
                 content: 'Great session.'
               }
             ];

@@ -389,6 +389,7 @@ export default function App() {
   const [publicSessions, setPublicSessions] = useState<any[]>([]);
   const [nostrProfiles, setNostrProfiles] = useState<Record<string, any>>({});
   const [isLoadingPublic, setIsLoadingPublic] = useState(false);
+  const [isSyncing, setIsSyncing] = useState(false);
 
   const SITE_START_DATE = useMemo(() => new Date('2026-03-20'), []);
 
@@ -399,70 +400,47 @@ export default function App() {
   }, [sessions]);
 
   const syncWithNostr = async (key: string) => {
-    // Fetch profile metadata for the user
-    const profiles = await fetchNostrProfiles([key]);
-    if (profiles[key]) {
-      setNostrProfiles(prev => ({ ...prev, ...profiles }));
-    }
-    
-    // Restore history from Nostr
-    const events = await fetchHistoryFromNostr(key);
-    if (events.length > 0) {
-      const restoredSessions: Session[] = [];
-      const restoredAchievements = new Set(earnedAchievements);
-      const restoredPatterns: BreathingPattern[] = [];
+    setIsSyncing(true);
+    try {
+      // Fetch profile metadata for the user
+      const profiles = await fetchNostrProfiles([key]);
+      if (profiles[key]) {
+        setNostrProfiles(prev => ({ ...prev, ...profiles }));
+      }
       
-      events.forEach(event => {
-        const durationTag = event.tags.find((t: string[]) => t[0] === 'duration');
-        const patternTag = event.tags.find((t: string[]) => t[0] === 'pattern');
-        const achievementTag = event.tags.find((t: string[]) => t[0] === 'achievement');
-        const patternDataTag = event.tags.find((t: string[]) => t[0] === 'pattern_data');
-        
-        if (durationTag && patternTag) {
-          restoredSessions.push({
-            id: event.id,
-            timestamp: event.created_at * 1000,
-            duration: parseInt(durationTag[1]),
-            pattern: patternTag[1],
-            pubkey: key
+      // Restore history from Nostr
+      const state = await fetchHistoryFromNostr(key);
+      if (state) {
+        if (state.sessions) {
+          setSessions(prev => {
+            const existingIds = new Set(prev.map(s => s.id));
+            const newOnes = state.sessions.filter((s: Session) => !existingIds.has(s.id));
+            return [...prev, ...newOnes].sort((a, b) => a.timestamp - b.timestamp);
           });
         }
         
-        if (achievementTag) {
-          restoredAchievements.add(achievementTag[1]);
+        if (state.earnedAchievements) {
+          setEarnedAchievements(prev => {
+            const updated = new Set([...Array.from(prev), ...state.earnedAchievements]);
+            localStorage.setItem('relaxyz_achievements', JSON.stringify(Array.from(updated)));
+            return updated;
+          });
         }
 
-        if (patternDataTag) {
-          try {
-            restoredPatterns.push(JSON.parse(patternDataTag[1]));
-          } catch (e) {
-            console.error('Failed to parse pattern data', e);
-          }
+        if (state.customPatterns) {
+          setCustomPatterns(prev => {
+            const existingIds = new Set(prev.map(p => p.id));
+            const newOnes = state.customPatterns.filter((p: BreathingPattern) => !existingIds.has(p.id));
+            const updated = [...prev, ...newOnes];
+            localStorage.setItem('nostr-breath-custom', JSON.stringify(updated));
+            return updated;
+          });
         }
-      });
-      
-      if (restoredSessions.length > 0) {
-        setSessions(prev => {
-          const existingIds = new Set(prev.map(s => s.id));
-          const newOnes = restoredSessions.filter(s => !existingIds.has(s.id));
-          return [...prev, ...newOnes].sort((a, b) => a.timestamp - b.timestamp);
-        });
       }
-      
-      if (restoredAchievements.size > earnedAchievements.size) {
-        setEarnedAchievements(restoredAchievements);
-        localStorage.setItem('relaxyz_achievements', JSON.stringify(Array.from(restoredAchievements)));
-      }
-
-      if (restoredPatterns.length > 0) {
-        setCustomPatterns(prev => {
-          const existingIds = new Set(prev.map(p => p.id));
-          const newOnes = restoredPatterns.filter(p => !existingIds.has(p.id));
-          const updated = [...prev, ...newOnes];
-          localStorage.setItem('nostr-breath-custom', JSON.stringify(updated));
-          return updated;
-        });
-      }
+    } catch (e) {
+      console.error('Nostr sync failed', e);
+    } finally {
+      setIsSyncing(false);
     }
   };
 
@@ -555,33 +533,23 @@ export default function App() {
 
     const loadProfile = async () => {
       setProfileData({ sessions: [], achievements: new Set(), streak: 0, isLoading: true });
-      const events = await fetchHistoryFromNostr(profileUser);
-      const restoredSessions: Session[] = [];
-      const restoredAchievements = new Set<string>();
+      const state = await fetchHistoryFromNostr(profileUser);
       
-      events.forEach(event => {
-        const durationTag = event.tags.find((t: string[]) => t[0] === 'duration');
-        const patternTag = event.tags.find((t: string[]) => t[0] === 'pattern');
-        const achievementTag = event.tags.find((t: string[]) => t[0] === 'achievement');
-        
-        if (durationTag && patternTag) {
-          restoredSessions.push({
-            id: event.id,
-            timestamp: event.created_at * 1000,
-            duration: parseInt(durationTag[1]),
-            pattern: patternTag[1],
-            pubkey: profileUser
-          });
-        }
-        if (achievementTag) restoredAchievements.add(achievementTag[1]);
-      });
-
-      setProfileData({
-        sessions: restoredSessions,
-        achievements: restoredAchievements,
-        streak: calculateStreak(restoredSessions),
-        isLoading: false
-      });
+      if (state) {
+        setProfileData({
+          sessions: state.sessions || [],
+          achievements: new Set(state.earnedAchievements || []),
+          streak: calculateStreak(state.sessions || []),
+          isLoading: false
+        });
+      } else {
+        setProfileData({
+          sessions: [],
+          achievements: new Set(),
+          streak: 0,
+          isLoading: false
+        });
+      }
     };
     loadProfile();
   }, [profileUser, pubkey, sessions, earnedAchievements, currentStreak]);
@@ -1037,18 +1005,6 @@ export default function App() {
       const updatedSessions = [...sessions, newSession];
       setSessions(updatedSessions);
 
-      // Post to server-side Nostr if configured and user is logged in
-      if (pubkey) {
-        postSessionToServerNostr({
-          pattern: selectedPattern.name,
-          duration
-        }, pubkey).then(res => {
-          if (!res.success && res.error === "Nostr bridge not configured") {
-            console.warn("Nostr Bridge Setup Required: Please add NOSTR_NSEC to the environment variables in the Settings menu.");
-          }
-        });
-      }
-
       // Achievement Logic
       const newEarned = new Set(earnedAchievements);
       let newlyEarned: string | null = null;
@@ -1159,6 +1115,24 @@ export default function App() {
         localStorage.setItem('relaxyz_achievements', JSON.stringify(Array.from(newEarned)));
         setLastEarnedAchievement(newlyEarned);
         setShowAchievement(true);
+
+        // Post achievement to Nostr if logged in
+        if (pubkey) {
+          postAchievementToNostr(pubkey, newlyEarned);
+        }
+      }
+
+      // Post full state snapshot to server-side Nostr if configured and user is logged in
+      if (pubkey) {
+        postSessionToServerNostr({
+          sessions: updatedSessions,
+          earnedAchievements: Array.from(newEarned),
+          customPatterns
+        }, pubkey).then(res => {
+          if (!res.success && res.error === "Nostr bridge not configured") {
+            console.warn("Nostr Bridge Setup Required: Please add NOSTR_NSEC to the environment variables in the Settings menu.");
+          }
+        });
       }
     }
 
@@ -1438,7 +1412,15 @@ export default function App() {
               </div>
 
               {/* Stats Cards */}
-              <div className="grid grid-cols-2 gap-4 mb-8">
+              <div className="grid grid-cols-2 gap-4 mb-8 relative">
+                {isSyncing && (
+                  <div className="absolute inset-0 bg-neutral-900/60 backdrop-blur-sm z-10 flex items-center justify-center rounded-2xl border border-blue-500/30">
+                    <div className="flex items-center gap-3 text-blue-400 font-bold uppercase tracking-widest text-xs">
+                      <div className="w-4 h-4 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
+                      Loading Nostr Data...
+                    </div>
+                  </div>
+                )}
                 <button 
                   onClick={() => setSelectedStatDetail(selectedStatDetail === 'streak' ? null : 'streak')}
                   className={`p-6 rounded-2xl border transition-all flex flex-col items-center text-center group ${

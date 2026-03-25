@@ -36,19 +36,19 @@ async function startServer() {
   });
 
   app.post("/api/nostr/post-session", async (req, res) => {
-    const { sessionData, userPubkey } = req.body;
+    const { fullState, userPubkey } = req.body;
     const nsec = process.env.NOSTR_NSEC;
     const relayUrl = 'wss://relaxy.nostr1.com';
 
     if (!userPubkey) {
-      return res.status(400).json({ error: "User must be logged in to post session events" });
+      return res.status(400).json({ error: "User must be logged in to post state snapshots" });
     }
 
     if (!nsec) {
-      console.warn("NOSTR_NSEC not configured on server. Please add it to the environment variables in the Settings menu.");
+      console.warn("NOSTR_NSEC not configured on server.");
       return res.status(500).json({ 
         error: "Nostr bridge not configured", 
-        details: "The server-side Nostr bridge requires a NOSTR_NSEC environment variable to sign events. Please add it in the AI Studio Settings menu." 
+        details: "The server-side Nostr bridge requires a NOSTR_NSEC environment variable to sign events." 
       });
     }
 
@@ -58,27 +58,21 @@ async function startServer() {
         throw new Error("Invalid nsec format");
       }
 
-      const mins = Math.floor(sessionData.duration / 60);
-      const secs = sessionData.duration % 60;
-      const durationStr = mins > 0 ? `${mins} min ${secs} sec` : `${secs} sec`;
-
-      const content = `🧘‍♂️ [Service Log] A ${durationStr} breathwork session was completed using the "${sessionData.pattern}" rhythm.\n\n#breathwork #relaxyz`;
+      // Store the full state as a JSON string in the content
+      // This allows "last hash" retrieval where only the latest event is needed
+      const content = JSON.stringify(fullState);
 
       const eventTemplate = {
         kind: 1,
         created_at: Math.floor(Date.now() / 1000),
         tags: [
-          ['t', 'breathwork'],
-          ['t', 'relaxyz'],
-          ['duration', sessionData.duration.toString()],
-          ['pattern', sessionData.pattern]
+          ['t', 'relaxy'],
+          ['p', userPubkey],
+          ['client', 'relaxyz'],
+          ['version', '2.0']
         ],
         content,
       };
-
-      if (userPubkey) {
-        eventTemplate.tags.push(['p', userPubkey]);
-      }
 
       const signedEvent = finalizeEvent(eventTemplate, sk as Uint8Array);
 
