@@ -1,421 +1,135 @@
-import { type EventTemplate } from 'nostr-tools/pure';
-import { nip19 } from 'nostr-tools';
 
-export function getShortNpub(pubkey: string): string {
-  try {
-    const npub = nip19.npubEncode(pubkey);
-    return `${npub.slice(0, 8)}...${npub.slice(-4)}`;
-  } catch (e) {
-    return `${pubkey.slice(0, 8)}...${pubkey.slice(-4)}`;
-  }
+const PRIVATE_RELAY = 'wss://relaxy.nostr1.com';
+
+const PUBLIC_RELAYS = [
+  'wss://relay.damus.io',
+  'wss://nos.lol',
+  'wss://relay.nostr.band',
+  'wss://relay.snort.social'
+];
+
+export async function publishPublicEvent(event: any) {
+  const pubkey = await window.nostr.getPublicKey();
+
+  const signed = await window.nostr.signEvent({
+    ...event,
+    pubkey,
+    created_at: Math.floor(Date.now() / 1000),
+    tags: [...(event.tags || []), ['t', 'relaxyz']]
+  });
+
+  await Promise.all(PUBLIC_RELAYS.map(sendToRelay(signed)));
 }
 
-export async function loginWithNostr(): Promise<string | null> {
-  // Amber and other NIP-07 extensions inject window.nostr
-  if (!window.nostr) {
-    alert('Nostr signer not found. If you are on Android, try using a browser that supports extensions or the Amber app integration.');
-    return null;
-  }
-  try {
-    const pubkey = await window.nostr.getPublicKey();
-    return pubkey;
-  } catch (e: any) {
-    if (e?.message?.includes('denied') || e?.toString()?.includes('denied')) {
-      console.log('Login request was denied by the user.');
-      // Don't alert for a simple denial, it's expected user behavior
-    } else {
-      console.error('Login failed', e);
-      alert(`Login failed: ${e?.message || e?.toString() || 'Unknown error'}`);
-    }
-    return null;
-  }
+export async function publishPrivateState(state: any) {
+  const pubkey = await window.nostr.getPublicKey();
+
+  const signed = await window.nostr.signEvent({
+    kind: 30001,
+    pubkey,
+    created_at: Math.floor(Date.now() / 1000),
+    tags: [
+      ['d', 'user_state'],
+      ['t', 'relaxy']
+    ],
+    content: JSON.stringify(state)
+  });
+
+  await sendToRelay(signed)(PRIVATE_RELAY);
 }
 
-async function publishToRelays(signedEvent: any): Promise<boolean> {
-  // Common relays to publish to
-  const relays = [
-    'wss://relaxy.nostr1.com',
-    'wss://relay.damus.io', 
-    'wss://nos.lol', 
-    'wss://relay.nostr.band',
-    'wss://relay.snort.social',
-    'wss://purplepag.es'
-  ];
-  
-  const publishPromises = relays.map(url => {
-    return new Promise((resolve) => {
-      const socket = new WebSocket(url);
-      const timeout = setTimeout(() => {
-        socket.close();
-        resolve(false);
-      }, 5000);
+function sendToRelay(event: any) {
+  return (url: string) => new Promise(resolve => {
+    const ws = new WebSocket(url);
 
-      socket.onopen = () => {
-        socket.send(JSON.stringify(['EVENT', signedEvent]));
-      };
+    ws.onopen = () => {
+      ws.send(JSON.stringify(['EVENT', event]));
+      resolve(true);
+    };
 
-      socket.onmessage = (msg) => {
-        try {
-          const data = JSON.parse(msg.data);
-          if (data[0] === 'OK' && data[1] === signedEvent.id) {
-            clearTimeout(timeout);
-            socket.close();
-            resolve(true);
-          }
-        } catch (e) {
-          // Ignore parse errors
+    setTimeout(() => resolve(false), 3000);
+  });
+}
+
+export async function fetchPrivateState(pubkey: string) {
+  const ws = new WebSocket(PRIVATE_RELAY);
+
+  return new Promise(resolve => {
+    let result: any = null;
+
+    ws.onopen = () => {
+      ws.send(JSON.stringify([
+        'REQ',
+        'state',
+        {
+          kinds: [30001],
+          authors: [pubkey],
+          '#d': ['user_state'],
+          '#t': ['relaxy'],
+          limit: 1
         }
+      ]));
+    };
+
+    ws.onmessage = (msg) => {
+      const data = JSON.parse(msg.data);
+
+      if (data[0] === 'EVENT') result = data[2];
+      if (data[0] === 'EOSE') resolve(result);
+    };
+
+    setTimeout(() => resolve(result), 6000);
+  });
+}
+
+export async function fetchPublicEvents() {
+  const events: any[] = [];
+
+  await Promise.all(PUBLIC_RELAYS.map(url => {
+    return new Promise(resolve => {
+      const ws = new WebSocket(url);
+
+      ws.onopen = () => {
+        ws.send(JSON.stringify([
+          'REQ',
+          'pub',
+          {
+            '#t': ['relaxyz'],
+            limit: 50
+          }
+        ]));
       };
 
-      socket.onerror = () => {
-        clearTimeout(timeout);
-        resolve(false);
+      ws.onmessage = (msg) => {
+        const data = JSON.parse(msg.data);
+        if (data[0] === 'EVENT') events.push(data[2]);
       };
+
+      setTimeout(resolve, 6000);
     });
-  });
+  }));
 
-  // We consider it a success if at least one relay accepted it
-  const results = await Promise.all(publishPromises);
-  return results.some(r => r === true);
+  return dedupe(events);
 }
 
-export async function postSessionToNostr(pubkey: string, sessionData: { pattern: string, duration: number }) {
-  if (!window.nostr) return false;
-
-  const mins = Math.floor(sessionData.duration / 60);
-  const secs = sessionData.duration % 60;
-  const durationStr = mins > 0 ? `${mins} min ${secs} sec` : `${secs} sec`;
-
-  const content = `🧘‍♂️ Just finished a ${durationStr} breathwork session using the "${sessionData.pattern}" rhythm on Relaxyz!\n\nTake a moment to breathe freely: https://www.relaxyz.com\n\n#breathwork #chillstr #relaxyz`;
-
-  const eventTemplate: EventTemplate = {
-    kind: 1,
-    created_at: Math.floor(Date.now() / 1000),
-    tags: [
-      ['t', 'breathwork'],
-      ['t', 'chillstr'],
-      ['t', 'relaxyz'],
-      ['p', pubkey],
-      ['duration', sessionData.duration.toString()],
-      ['pattern', sessionData.pattern]
-    ],
-    content,
-  };
-
-  try {
-    const signedEvent = await window.nostr.signEvent(eventTemplate);
-    return await publishToRelays(signedEvent);
-  } catch (e) {
-    console.error('Failed to sign/post event', e);
-    return false;
+function dedupe(events: any[]) {
+  const map = new Map();
+  for (const e of events) {
+    if (!map.has(e.id)) map.set(e.id, e);
   }
+  return Array.from(map.values())
+    .sort((a: any, b: any) => b.created_at - a.created_at);
 }
 
-export async function postPatternToNostr(pubkey: string, pattern: any) {
-  if (!window.nostr) return false;
+export function buildState(events: any[]) {
+  const state = { sessions: [] as any[] };
 
-  const content = `🧘‍♂️ I just made "${pattern.name}", a breathing pattern on Relaxy! Try it out: ${window.location.origin}\n\n#breathwork #chillstr #relaxyz`;
-
-  const eventTemplate: EventTemplate = {
-    kind: 1,
-    created_at: Math.floor(Date.now() / 1000),
-    tags: [
-      ['t', 'breathwork'],
-      ['t', 'chillstr'],
-      ['t', 'relaxyz'],
-      ['p', pubkey],
-      ['pattern_data', JSON.stringify(pattern)]
-    ],
-    content,
-  };
-
-  try {
-    const signedEvent = await window.nostr.signEvent(eventTemplate);
-    return await publishToRelays(signedEvent);
-  } catch (e) {
-    console.error('Failed to sign/post event', e);
-    return false;
+  for (const ev of events) {
+    try {
+      const data = JSON.parse(ev.content);
+      state.sessions.push(data);
+    } catch {}
   }
-}
 
-export async function postAchievementToNostr(pubkey: string, achievementName: string) {
-  if (!window.nostr) return false;
-
-  const content = `🌳 I just completed my first full tree session on Relaxyz! 🧘‍♂️\n\nAchievement Unlocked: ${achievementName}\n\nJoin me in breathing: ${window.location.origin}\n\n#breathwork #chillstr #achievement #relaxyz`;
-
-  const eventTemplate: EventTemplate = {
-    kind: 1,
-    created_at: Math.floor(Date.now() / 1000),
-    tags: [
-      ['t', 'breathwork'],
-      ['t', 'chillstr'],
-      ['t', 'relaxyz'],
-      ['p', pubkey],
-      ['achievement', achievementName]
-    ],
-    content,
-  };
-
-  try {
-    const signedEvent = await window.nostr.signEvent(eventTemplate);
-    return await publishToRelays(signedEvent);
-  } catch (e) {
-    console.error('Failed to sign/post event', e);
-    return false;
-  }
-}
-
-export async function postSessionToServerNostr(fullState: any, userPubkey?: string) {
-  try {
-    const response = await fetch('/api/nostr/post-session', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        fullState,
-        userPubkey
-      }),
-    });
-    
-    if (!response.ok) {
-      const error = await response.json();
-      return { success: false, error: error.error, details: error.details };
-    }
-    
-    return { success: true, ...(await response.json()) };
-  } catch (e: any) {
-    console.error('Server post failed', e);
-    return { success: false, error: e.message || 'Unknown error' };
-  }
-}
-
-export async function postStatsToNostr(pubkey: string, stats: { totalTime: number, totalSessions: number }) {
-  if (!window.nostr) return false;
-
-  const hours = Math.floor(stats.totalTime / 3600);
-  const mins = Math.floor((stats.totalTime % 3600) / 60);
-  const timeStr = hours > 0 ? `${hours}h ${mins}m` : `${mins}m`;
-
-  const content = `🧘‍♂️ My Breathwork Journey on Relaxyz:\n\n✨ Total Sessions: ${stats.totalSessions}\n⏳ Total Time Breathed: ${timeStr}\n\nJoin me in finding your calm: ${window.location.origin}\n\n#breathwork #chillstr #relaxyz #mindfulness`;
-
-  const eventTemplate: EventTemplate = {
-    kind: 1,
-    created_at: Math.floor(Date.now() / 1000),
-    tags: [
-      ['t', 'breathwork'],
-      ['t', 'chillstr'],
-      ['t', 'relaxyz'],
-      ['p', pubkey],
-      ['total_sessions', stats.totalSessions.toString()],
-      ['total_time', stats.totalTime.toString()]
-    ],
-    content,
-  };
-
-  try {
-    const signedEvent = await window.nostr.signEvent(eventTemplate);
-    return await publishToRelays(signedEvent);
-  } catch (e) {
-    console.error('Failed to sign/post event', e);
-    return false;
-  }
-}
-
-export async function fetchHistoryFromNostr(pubkey: string): Promise<any | null> {
-  const relay = 'wss://relaxy.nostr1.com';
-  
-  return new Promise((resolve) => {
-    const socket = new WebSocket(relay);
-    let latestEvent: any = null;
-    const timeout = setTimeout(() => {
-      socket.close();
-      resolve(null);
-    }, 5000);
-
-    socket.onopen = () => {
-      const filter = {
-        kinds: [1],
-        authors: [pubkey],
-        '#t': ['relaxy'],
-        limit: 1 // Only need the latest state snapshot
-      };
-      socket.send(JSON.stringify(['REQ', 'history', filter]));
-    };
-
-    socket.onmessage = (msg) => {
-      try {
-        const data = JSON.parse(msg.data);
-        if (data[0] === 'EVENT' && data[1] === 'history') {
-          latestEvent = data[2];
-        } else if (data[0] === 'EOSE' && data[1] === 'history') {
-          clearTimeout(timeout);
-          socket.close();
-          
-          if (latestEvent) {
-            try {
-              const state = JSON.parse(latestEvent.content);
-              resolve(state);
-            } catch (e) {
-              console.error('Failed to parse state snapshot', e);
-              resolve(null);
-            }
-          } else {
-            // Mock data for demo users if no real data exists
-            if (pubkey === 'npub1v7v...xyz789') {
-              resolve({
-                sessions: [
-                  { id: 'mock1', timestamp: Date.now() - 300000, duration: 600, pattern: 'Box Breathing', pubkey },
-                  { id: 'mock4', timestamp: Date.now() - 86400000, duration: 600, pattern: 'Box Breathing', pubkey }
-                ],
-                earnedAchievements: ['first_breath'],
-                customPatterns: []
-              });
-            } else {
-              resolve(null);
-            }
-          }
-        }
-      } catch (e) {
-        // Ignore
-      }
-    };
-
-    socket.onerror = () => {
-      clearTimeout(timeout);
-      resolve(null);
-    };
-  });
-}
-
-export async function fetchPublicSessions(): Promise<any[]> {
-  const relay = 'wss://relaxy.nostr1.com';
-  
-  return new Promise((resolve) => {
-    const socket = new WebSocket(relay);
-    const events: any[] = [];
-    const timeout = setTimeout(() => {
-      socket.close();
-      resolve(events);
-    }, 5000);
-
-    socket.onopen = () => {
-      const filter = {
-        kinds: [1],
-        '#t': ['relaxy'],
-        limit: 50
-      };
-      socket.send(JSON.stringify(['REQ', 'public_history', filter]));
-    };
-
-    socket.onmessage = (msg) => {
-      try {
-        const data = JSON.parse(msg.data);
-        if (data[0] === 'EVENT' && data[1] === 'public_history') {
-          const event = data[2];
-          const durationTag = event.tags.find((t: string[]) => t[0] === 'duration');
-          if (durationTag) {
-            events.push(event);
-          }
-        } else if (data[0] === 'EOSE' && data[1] === 'public_history') {
-          clearTimeout(timeout);
-          socket.close();
-          
-          // If no real events found, return some mock data for demo
-          if (events.length === 0) {
-            const mockEvents = [
-              {
-                id: 'mock1',
-                pubkey: 'npub1v7v...xyz789',
-                created_at: Math.floor(Date.now() / 1000) - 300,
-                tags: [['duration', '600'], ['pattern', 'Box Breathing'], ['t', 'relaxy']],
-                content: '🧘‍♂️ Just finished a 10 min session!'
-              },
-              {
-                id: 'mock2',
-                pubkey: 'npub1abc...def123',
-                created_at: Math.floor(Date.now() / 1000) - 3600,
-                tags: [['duration', '300'], ['pattern', '4-7-8'], ['t', 'relaxy']],
-                content: 'Feeling relaxed.'
-              },
-              {
-                id: 'mock3',
-                pubkey: 'npub1pqr...stu456',
-                created_at: Math.floor(Date.now() / 1000) - 7200,
-                tags: [['duration', '900'], ['pattern', 'Deep Calm'], ['t', 'relaxy']],
-                content: 'Great session.'
-              }
-            ];
-            resolve(mockEvents);
-          } else {
-            resolve(events);
-          }
-        }
-      } catch (e) {
-        // Ignore
-      }
-    };
-
-    socket.onerror = () => {
-      clearTimeout(timeout);
-      resolve(events);
-    };
-  });
-}
-
-export async function fetchNostrProfiles(pubkeys: string[]): Promise<Record<string, any>> {
-  if (pubkeys.length === 0) return {};
-  const relay = 'wss://relay.damus.io';
-  
-  return new Promise((resolve) => {
-    const socket = new WebSocket(relay);
-    const profiles: Record<string, any> = {};
-    const timeout = setTimeout(() => {
-      socket.close();
-      resolve(profiles);
-    }, 5000);
-
-    socket.onopen = () => {
-      const filter = {
-        kinds: [0],
-        authors: pubkeys
-      };
-      socket.send(JSON.stringify(['REQ', 'profiles', filter]));
-    };
-
-    socket.onmessage = (msg) => {
-      try {
-        const data = JSON.parse(msg.data);
-        if (data[0] === 'EVENT' && data[1] === 'profiles') {
-          const event = data[2];
-          try {
-            const metadata = JSON.parse(event.content);
-            profiles[event.pubkey] = metadata;
-          } catch (e) {
-            // Ignore
-          }
-        } else if (data[0] === 'EOSE' && data[1] === 'profiles') {
-          clearTimeout(timeout);
-          socket.close();
-          resolve(profiles);
-        }
-      } catch (e) {
-        // Ignore
-      }
-    };
-
-    socket.onerror = () => {
-      clearTimeout(timeout);
-      resolve(profiles);
-    };
-  });
-}
-
-declare global {
-  interface Window {
-    nostr?: {
-      getPublicKey(): Promise<string>;
-      signEvent(event: any): Promise<any>;
-    };
-  }
+  return state;
 }
