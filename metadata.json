@@ -1,5 +1,5 @@
 {
   "name": "Relaxyz (Beta)",
-  "description": "A paced breathing and breathwork app. (Beta: All data is stored locally in your browser).",
+  "description": "A paced breathing and breathwork app. (Beta: Data is backed up to Nostr via #relaxyz).",
   "requestFramePermissions": []
 }

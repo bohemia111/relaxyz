@@ -50,7 +50,7 @@ import {
 } from 'recharts';
 import confetti from 'canvas-confetti';
 import { BREATHING_PATTERNS, BreathingPattern, BreathingPhase, SoundType, SOUND_OPTIONS, Session, WeeklyPlan } from './types';
-import { loginWithNostr, postSessionToNostr, postPatternToNostr, postAchievementToNostr } from './nostr';
+import { loginWithNostr, postSessionToNostr, postPatternToNostr, postAchievementToNostr, postStatsToNostr, fetchHistoryFromNostr, fetchPublicSessions } from './nostr';
 
 const ACHIEVEMENTS = [
   { id: 'first_breath', name: 'First Breath', description: 'Complete your first session', icon: <Wind className="w-4 h-4" /> },
@@ -358,12 +358,19 @@ export default function App() {
     };
   });
   const [profileUser, setProfileUser] = useState<string | null>(null);
+  const [profileData, setProfileData] = useState<{
+    sessions: Session[];
+    achievements: Set<string>;
+    streak: number;
+    isLoading: boolean;
+  } | null>(null);
   const [dailyGoal, setDailyGoal] = useState(() => {
     return parseInt(localStorage.getItem('relaxyz_goal_daily') || '10');
   });
   
   const [showSharePrompt, setShowSharePrompt] = useState(false);
   const [lastCreatedPattern, setLastCreatedPattern] = useState<BreathingPattern | null>(null);
+  const [lastEarnedAchievement, setLastEarnedAchievement] = useState<string | null>(null);
   const [showAchievement, setShowAchievement] = useState(false);
   const [hasEarnedTreeAchievement, setHasEarnedTreeAchievement] = useState(() => {
     return localStorage.getItem('relaxyz_achievement_tree') === 'true';
@@ -372,10 +379,13 @@ export default function App() {
     const saved = localStorage.getItem('relaxyz_achievements');
     return saved ? new Set(JSON.parse(saved)) : new Set();
   });
+  const [selectedStatDetail, setSelectedStatDetail] = useState<'streak' | 'best' | 'time' | 'sessions' | null>(null);
 
   const [totalShares, setTotalShares] = useState(() => {
     return parseInt(localStorage.getItem('relaxyz_total_shares') || '0');
   });
+  const [publicSessions, setPublicSessions] = useState<any[]>([]);
+  const [isLoadingPublic, setIsLoadingPublic] = useState(false);
 
   const SITE_START_DATE = useMemo(() => new Date('2026-03-20'), []);
 
@@ -385,52 +395,109 @@ export default function App() {
     localStorage.setItem('relaxyz_sessions', JSON.stringify(sessions));
   }, [sessions]);
 
-  const { currentStreak, bestStreak } = useMemo(() => {
-    if (sessions.length === 0) return { currentStreak: 0, bestStreak: 0 };
-    
-    const dates = Array.from(new Set(sessions.map(s => new Date(s.timestamp).toDateString())))
+  const calculateStreak = (userSessions: Session[]) => {
+    if (userSessions.length === 0) return 0;
+    const dates = Array.from(new Set(userSessions.map(s => new Date(s.timestamp).toDateString())))
       .map((d: string) => new Date(d).getTime())
       .sort((a, b) => b - a);
     
-    let current = 0;
     const today = new Date().toDateString();
     const yesterday = new Date(Date.now() - 86400000).toDateString();
+    const hasToday = userSessions.some(s => new Date(s.timestamp).toDateString() === today);
+    const hasYesterday = userSessions.some(s => new Date(s.timestamp).toDateString() === yesterday);
     
-    const hasToday = sessions.some(s => new Date(s.timestamp).toDateString() === today);
-    const hasYesterday = sessions.some(s => new Date(s.timestamp).toDateString() === yesterday);
+    if (!hasToday && !hasYesterday) return 0;
     
-    if (!hasToday && !hasYesterday) {
-      current = 0;
-    } else {
-      let lastDate = hasToday ? new Date(today).getTime() : new Date(yesterday).getTime();
-      current = 1;
-      
-      for (let i = dates.indexOf(lastDate) + 1; i < dates.length; i++) {
-        if (lastDate - dates[i] === 86400000) {
-          current++;
-          lastDate = dates[i];
-        } else {
-          break;
-        }
+    let lastDate = hasToday ? new Date(today).getTime() : new Date(yesterday).getTime();
+    let current = 1;
+    for (let i = dates.indexOf(lastDate) + 1; i < dates.length; i++) {
+      if (lastDate - dates[i] === 86400000) {
+        current++;
+        lastDate = dates[i];
+      } else {
+        break;
       }
     }
+    return current;
+  };
+
+  const { currentStreak, bestStreak, totalTime, totalSessions } = useMemo(() => {
+    const current = calculateStreak(sessions);
     
     // Best streak
+    const dates = Array.from(new Set(sessions.map(s => new Date(s.timestamp).toDateString())))
+      .map((d: string) => new Date(d).getTime())
+      .sort((a, b) => a - b);
+      
     let best = 0;
     let temp = 1;
-    const sortedDates = [...dates].sort((a, b) => a - b);
-    for (let i = 1; i < sortedDates.length; i++) {
-      if (sortedDates[i] - sortedDates[i-1] === 86400000) {
-        temp++;
-      } else {
-        best = Math.max(best, temp);
-        temp = 1;
+    if (dates.length > 0) {
+      best = 1;
+      for (let i = 1; i < dates.length; i++) {
+        if (dates[i] - dates[i-1] === 86400000) {
+          temp++;
+        } else {
+          best = Math.max(best, temp);
+          temp = 1;
+        }
       }
+      best = Math.max(best, temp);
     }
-    best = Math.max(best, temp);
     
-    return { currentStreak: current, bestStreak: best };
+    const totalTime = sessions.reduce((acc, s) => acc + s.duration, 0);
+    const totalSessions = sessions.length;
+    
+    return { currentStreak: current, bestStreak: best, totalTime, totalSessions };
   }, [sessions]);
+
+  useEffect(() => {
+    if (!profileUser) {
+      setProfileData(null);
+      return;
+    }
+
+    if (profileUser === pubkey) {
+      setProfileData({
+        sessions,
+        achievements: earnedAchievements,
+        streak: currentStreak,
+        isLoading: false
+      });
+      return;
+    }
+
+    const loadProfile = async () => {
+      setProfileData({ sessions: [], achievements: new Set(), streak: 0, isLoading: true });
+      const events = await fetchHistoryFromNostr(profileUser);
+      const restoredSessions: Session[] = [];
+      const restoredAchievements = new Set<string>();
+      
+      events.forEach(event => {
+        const durationTag = event.tags.find((t: string[]) => t[0] === 'duration');
+        const patternTag = event.tags.find((t: string[]) => t[0] === 'pattern');
+        const achievementTag = event.tags.find((t: string[]) => t[0] === 'achievement');
+        
+        if (durationTag && patternTag) {
+          restoredSessions.push({
+            id: event.id,
+            timestamp: event.created_at * 1000,
+            duration: parseInt(durationTag[1]),
+            pattern: patternTag[1],
+            pubkey: profileUser
+          });
+        }
+        if (achievementTag) restoredAchievements.add(achievementTag[1]);
+      });
+
+      setProfileData({
+        sessions: restoredSessions,
+        achievements: restoredAchievements,
+        streak: calculateStreak(restoredSessions),
+        isLoading: false
+      });
+    };
+    loadProfile();
+  }, [profileUser, pubkey, sessions, earnedAchievements, currentStreak]);
 
   const chartData = useMemo(() => {
     const ref = new Date(referenceDate);
@@ -745,6 +812,19 @@ export default function App() {
         console.error('Failed to load custom patterns', e);
       }
     }
+
+    // Fetch public sessions
+    const loadPublic = async () => {
+      setIsLoadingPublic(true);
+      const sessions = await fetchPublicSessions();
+      setPublicSessions(sessions.sort((a, b) => b.created_at - a.created_at).slice(0, 10));
+      setIsLoadingPublic(false);
+    };
+    loadPublic();
+    
+    // Refresh every minute
+    const interval = setInterval(loadPublic, 60000);
+    return () => clearInterval(interval);
   }, []);
 
   // Save custom patterns
@@ -776,6 +856,7 @@ export default function App() {
       newEarned.add('pattern_explorer');
       setEarnedAchievements(newEarned);
       localStorage.setItem('relaxyz_achievements', JSON.stringify(Array.from(newEarned)));
+      setLastEarnedAchievement('pattern_explorer');
       setShowAchievement(true);
     }
     
@@ -801,7 +882,68 @@ export default function App() {
   // Handle Login
   const handleLogin = async () => {
     const key = await loginWithNostr();
-    if (key) setPubkey(key);
+    if (key) {
+      setPubkey(key);
+      // Restore history from Nostr
+      const events = await fetchHistoryFromNostr(key);
+      if (events.length > 0) {
+        const restoredSessions: Session[] = [];
+        const restoredAchievements = new Set(earnedAchievements);
+        const restoredPatterns: BreathingPattern[] = [];
+        
+        events.forEach(event => {
+          const durationTag = event.tags.find((t: string[]) => t[0] === 'duration');
+          const patternTag = event.tags.find((t: string[]) => t[0] === 'pattern');
+          const achievementTag = event.tags.find((t: string[]) => t[0] === 'achievement');
+          const patternDataTag = event.tags.find((t: string[]) => t[0] === 'pattern_data');
+          
+          if (durationTag && patternTag) {
+            restoredSessions.push({
+              id: event.id,
+              timestamp: event.created_at * 1000,
+              duration: parseInt(durationTag[1]),
+              pattern: patternTag[1],
+              pubkey: key
+            });
+          }
+          
+          if (achievementTag) {
+            restoredAchievements.add(achievementTag[1]);
+          }
+
+          if (patternDataTag) {
+            try {
+              restoredPatterns.push(JSON.parse(patternDataTag[1]));
+            } catch (e) {
+              console.error('Failed to parse pattern data', e);
+            }
+          }
+        });
+        
+        if (restoredSessions.length > 0) {
+          setSessions(prev => {
+            const existingIds = new Set(prev.map(s => s.id));
+            const newOnes = restoredSessions.filter(s => !existingIds.has(s.id));
+            return [...prev, ...newOnes].sort((a, b) => a.timestamp - b.timestamp);
+          });
+        }
+        
+        if (restoredAchievements.size > earnedAchievements.size) {
+          setEarnedAchievements(restoredAchievements);
+          localStorage.setItem('relaxyz_achievements', JSON.stringify(Array.from(restoredAchievements)));
+        }
+
+        if (restoredPatterns.length > 0) {
+          setCustomPatterns(prev => {
+            const existingIds = new Set(prev.map(p => p.id));
+            const newOnes = restoredPatterns.filter(p => !existingIds.has(p.id));
+            const updated = [...prev, ...newOnes];
+            localStorage.setItem('nostr-breath-custom', JSON.stringify(updated));
+            return updated;
+          });
+        }
+      }
+    }
   };
 
   const handleLogout = () => {
@@ -859,85 +1001,85 @@ export default function App() {
 
       // Achievement Logic
       const newEarned = new Set(earnedAchievements);
-      let earnedAny = false;
+      let newlyEarned: string | null = null;
 
       // 1. First Breath
       if (sessions.length === 0 && !newEarned.has('first_breath')) {
         newEarned.add('first_breath');
-        earnedAny = true;
+        newlyEarned = 'first_breath';
       }
 
       // 2. Johnny Appleseed (Growth)
       if (growth >= 1 && !newEarned.has('johnny_appleseed')) {
         newEarned.add('johnny_appleseed');
-        earnedAny = true;
+        newlyEarned = 'johnny_appleseed';
       }
 
       // 3. Time of day
       const hour = new Date().getHours();
       if (hour < 8 && !newEarned.has('early_bird')) {
         newEarned.add('early_bird');
-        earnedAny = true;
+        newlyEarned = 'early_bird';
       }
       const earlySessions = updatedSessions.filter(s => new Date(s.timestamp).getHours() < 8);
       if (earlySessions.length >= 5 && !newEarned.has('early_bird_5')) {
         newEarned.add('early_bird_5');
-        earnedAny = true;
+        newlyEarned = 'early_bird_5';
       }
 
       if (hour >= 22 && !newEarned.has('night_owl')) {
         newEarned.add('night_owl');
-        earnedAny = true;
+        newlyEarned = 'night_owl';
       }
       const lateSessions = updatedSessions.filter(s => new Date(s.timestamp).getHours() >= 22);
       if (lateSessions.length >= 5 && !newEarned.has('night_owl_5')) {
         newEarned.add('night_owl_5');
-        earnedAny = true;
+        newlyEarned = 'night_owl_5';
       }
 
       // 4. Streaks
       if (currentStreak >= 3 && !newEarned.has('streak_3')) {
         newEarned.add('streak_3');
-        earnedAny = true;
+        newlyEarned = 'streak_3';
       }
       if (currentStreak >= 10 && !newEarned.has('streak_10')) {
         newEarned.add('streak_10');
-        earnedAny = true;
+        newlyEarned = 'streak_10';
       }
       if (currentStreak >= 30 && !newEarned.has('streak_30')) {
         newEarned.add('streak_30');
-        earnedAny = true;
+        newlyEarned = 'streak_30';
       }
       if (currentStreak >= 100 && !newEarned.has('streak_100')) {
         newEarned.add('streak_100');
-        earnedAny = true;
+        newlyEarned = 'streak_100';
       }
 
       // 5. Deep Diver (20+ min)
       if (duration >= 1200 && !newEarned.has('deep_diver')) {
         newEarned.add('deep_diver');
-        earnedAny = true;
+        newlyEarned = 'deep_diver';
       }
       if (duration >= 3600 && !newEarned.has('deep_diver_60')) {
         newEarned.add('deep_diver_60');
-        earnedAny = true;
+        newlyEarned = 'deep_diver_60';
       }
 
       // 6. Century Club (100 sessions)
       if (updatedSessions.length >= 100 && !newEarned.has('century_club')) {
         newEarned.add('century_club');
-        earnedAny = true;
+        newlyEarned = 'century_club';
       }
 
       // 7. Breath Marathon (1 hour total)
       const totalTime = updatedSessions.reduce((acc, s) => acc + s.duration, 0);
       if (totalTime >= 3600 && !newEarned.has('marathon')) {
         newEarned.add('marathon');
-        earnedAny = true;
+        newlyEarned = 'marathon';
       }
       if (totalTime >= 36000 && !newEarned.has('eternal_breath')) {
         newEarned.add('eternal_breath');
-        earnedAny = true;
+        newlyEarned = 'eternal_breath';
       }
 
       // 8. Weekend Warrior
@@ -946,7 +1088,7 @@ export default function App() {
       const hasSun = updatedSessions.some(s => new Date(s.timestamp).getDay() === 0);
       if (hasSat && hasSun && !newEarned.has('weekend_warrior')) {
         newEarned.add('weekend_warrior');
-        earnedAny = true;
+        newlyEarned = 'weekend_warrior';
       }
 
       // 9. Perfect Week
@@ -959,12 +1101,13 @@ export default function App() {
       const uniqueDaysLast7 = new Set(sessionsLast7Days.map(s => new Date(s.timestamp).toDateString()));
       if (uniqueDaysLast7.size === 7 && !newEarned.has('perfect_week')) {
         newEarned.add('perfect_week');
-        earnedAny = true;
+        newlyEarned = 'perfect_week';
       }
 
-      if (earnedAny) {
+      if (newlyEarned) {
         setEarnedAchievements(newEarned);
         localStorage.setItem('relaxyz_achievements', JSON.stringify(Array.from(newEarned)));
+        setLastEarnedAchievement(newlyEarned);
         setShowAchievement(true);
       }
     }
@@ -991,7 +1134,7 @@ export default function App() {
     }
 
     setIsPosting(true);
-    const success = await postPatternToNostr(currentPubkey, lastCreatedPattern.name);
+    const success = await postPatternToNostr(currentPubkey, lastCreatedPattern);
     setIsPosting(false);
     if (success) {
       const newShares = totalShares + 1;
@@ -1004,6 +1147,7 @@ export default function App() {
         newEarned.add('social_breather');
         setEarnedAchievements(newEarned);
         localStorage.setItem('relaxyz_achievements', JSON.stringify(Array.from(newEarned)));
+        setLastEarnedAchievement('social_breather');
         setShowAchievement(true);
       }
       
@@ -1032,6 +1176,7 @@ export default function App() {
         newEarned.add('social_breather');
         setEarnedAchievements(newEarned);
         localStorage.setItem('relaxyz_achievements', JSON.stringify(Array.from(newEarned)));
+        setLastEarnedAchievement('social_breather');
         setShowAchievement(true);
       }
       
@@ -1039,7 +1184,20 @@ export default function App() {
     }
   };
 
-  const handleShareAchievement = async () => {
+  const handleShareStats = async () => {
+    let currentPubkey = pubkey;
+    if (!currentPubkey) {
+      currentPubkey = await loginWithNostr();
+      if (currentPubkey) setPubkey(currentPubkey);
+      else return;
+    }
+    setIsPosting(true);
+    const success = await postStatsToNostr(currentPubkey, { totalTime, totalSessions });
+    setIsPosting(false);
+    if (success) alert('Stats shared to Nostr!');
+  };
+
+  const handleShareAchievement = async (achievementName: string) => {
     let currentPubkey = pubkey;
     if (!currentPubkey) {
       currentPubkey = await loginWithNostr();
@@ -1052,7 +1210,7 @@ export default function App() {
     
     if (currentPubkey) {
       setIsPosting(true);
-      const success = await postAchievementToNostr(currentPubkey, "First Tree Completed");
+      const success = await postAchievementToNostr(currentPubkey, achievementName);
       setIsPosting(false);
       if (success) {
         alert('Achievement shared to Nostr!');
@@ -1102,6 +1260,15 @@ export default function App() {
     const mins = Math.floor(seconds / 60);
     const secs = seconds % 60;
     return `${mins}:${secs.toString().padStart(2, '0')}`;
+  };
+
+  const formatTotalTime = (seconds: number) => {
+    const hours = Math.floor(seconds / 3600);
+    const mins = Math.floor((seconds % 3600) / 60);
+    if (hours > 0) {
+      return `${hours}h ${mins}m`;
+    }
+    return `${mins}m`;
   };
 
   const currentPhase = selectedPattern?.phases[currentPhaseIndex];
@@ -1196,7 +1363,7 @@ export default function App() {
                   </div>
                   <div className="flex flex-col">
                     <h2 className="text-2xl font-display font-bold">My Progress <span className="text-xs font-sans font-normal text-amber-500 ml-2 px-2 py-0.5 bg-amber-500/10 rounded-full">Beta</span></h2>
-                    <p className="text-[10px] text-neutral-500 font-medium">Data is stored locally in your browser</p>
+                    <p className="text-[10px] text-neutral-500 font-medium">Data is backed up to Nostr via #relaxyz</p>
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
@@ -1209,73 +1376,134 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Streak Cards */}
+              {/* Stats Cards */}
               <div className="grid grid-cols-2 gap-4 mb-8">
-                <div className="bg-neutral-800/50 p-6 rounded-2xl border border-neutral-700/50 flex flex-col items-center text-center">
-                  <Award className="w-8 h-8 text-orange-400 mb-2" />
+                <button 
+                  onClick={() => setSelectedStatDetail(selectedStatDetail === 'streak' ? null : 'streak')}
+                  className={`p-6 rounded-2xl border transition-all flex flex-col items-center text-center group ${
+                    selectedStatDetail === 'streak' ? 'bg-orange-500/10 border-orange-500/50' : 'bg-neutral-800/50 border-neutral-700/50 hover:border-orange-500/30'
+                  }`}
+                >
+                  <Award className={`w-8 h-8 mb-2 transition-colors ${selectedStatDetail === 'streak' ? 'text-orange-400' : 'text-orange-400/60 group-hover:text-orange-400'}`} />
                   <span className="text-3xl font-display font-bold text-white">{currentStreak}</span>
                   <span className="text-xs uppercase tracking-widest text-neutral-500 font-bold">Current Streak</span>
-                </div>
-                <div className="bg-neutral-800/50 p-6 rounded-2xl border border-neutral-700/50 flex flex-col items-center text-center">
-                  <CheckCircle2 className="w-8 h-8 text-emerald-400 mb-2" />
+                </button>
+                <button 
+                  onClick={() => setSelectedStatDetail(selectedStatDetail === 'best' ? null : 'best')}
+                  className={`p-6 rounded-2xl border transition-all flex flex-col items-center text-center group ${
+                    selectedStatDetail === 'best' ? 'bg-emerald-500/10 border-emerald-500/50' : 'bg-neutral-800/50 border-neutral-700/50 hover:border-emerald-500/30'
+                  }`}
+                >
+                  <CheckCircle2 className={`w-8 h-8 mb-2 transition-colors ${selectedStatDetail === 'best' ? 'text-emerald-400' : 'text-emerald-400/60 group-hover:text-emerald-400'}`} />
                   <span className="text-3xl font-display font-bold text-white">{bestStreak}</span>
                   <span className="text-xs uppercase tracking-widest text-neutral-500 font-bold">Best Streak</span>
-                </div>
+                </button>
+                <button 
+                  onClick={() => setSelectedStatDetail(selectedStatDetail === 'time' ? null : 'time')}
+                  className={`p-6 rounded-2xl border transition-all flex flex-col items-center text-center group ${
+                    selectedStatDetail === 'time' ? 'bg-blue-500/10 border-blue-500/50' : 'bg-neutral-800/50 border-neutral-700/50 hover:border-blue-500/30'
+                  }`}
+                >
+                  <Clock className={`w-8 h-8 mb-2 transition-colors ${selectedStatDetail === 'time' ? 'text-blue-400' : 'text-blue-400/60 group-hover:text-blue-400'}`} />
+                  <span className="text-3xl font-display font-bold text-white">{formatTotalTime(totalTime)}</span>
+                  <span className="text-xs uppercase tracking-widest text-neutral-500 font-bold">Total Time</span>
+                </button>
+                <button 
+                  onClick={() => setSelectedStatDetail(selectedStatDetail === 'sessions' ? null : 'sessions')}
+                  className={`p-6 rounded-2xl border transition-all flex flex-col items-center text-center group ${
+                    selectedStatDetail === 'sessions' ? 'bg-purple-500/10 border-purple-500/50' : 'bg-neutral-800/50 border-neutral-700/50 hover:border-purple-500/30'
+                  }`}
+                >
+                  <Wind className={`w-8 h-8 mb-2 transition-colors ${selectedStatDetail === 'sessions' ? 'text-purple-400' : 'text-purple-400/60 group-hover:text-purple-400'}`} />
+                  <span className="text-3xl font-display font-bold text-white">{totalSessions}</span>
+                  <span className="text-xs uppercase tracking-widest text-neutral-500 font-bold">Sessions</span>
+                </button>
               </div>
+
+              {/* Detailed Breakdown */}
+              <AnimatePresence>
+                {selectedStatDetail && (
+                  <motion.div
+                    initial={{ opacity: 0, height: 0 }}
+                    animate={{ opacity: 1, height: 'auto' }}
+                    exit={{ opacity: 0, height: 0 }}
+                    className="mb-8 overflow-hidden"
+                  >
+                    <div className="bg-neutral-800/30 p-6 rounded-2xl border border-neutral-700/50">
+                      <div className="flex justify-between items-center mb-4">
+                        <h3 className="text-sm font-bold uppercase tracking-widest text-neutral-400">
+                          {selectedStatDetail === 'streak' && 'Streak Details'}
+                          {selectedStatDetail === 'best' && 'Best Streak History'}
+                          {selectedStatDetail === 'time' && 'Time Breakdown'}
+                          {selectedStatDetail === 'sessions' && 'Session Breakdown'}
+                        </h3>
+                        {(selectedStatDetail === 'time' || selectedStatDetail === 'sessions') && (
+                          <button 
+                            onClick={handleShareStats}
+                            disabled={isPosting}
+                            className="text-[10px] font-bold uppercase tracking-widest text-blue-400 hover:text-blue-300 flex items-center gap-1 transition-colors"
+                          >
+                            <Share2 className="w-3 h-3" />
+                            Share Stats
+                          </button>
+                        )}
+                      </div>
+
+                      <div className="space-y-3">
+                        {selectedStatDetail === 'streak' && (
+                          <div className="text-sm text-neutral-400">
+                            You've breathed for <span className="text-white font-bold">{currentStreak}</span> consecutive days. 
+                            Keep it up to reach your next milestone!
+                          </div>
+                        )}
+                        {selectedStatDetail === 'best' && (
+                          <div className="text-sm text-neutral-400">
+                            Your all-time record is <span className="text-white font-bold">{bestStreak}</span> days.
+                            Consistency is the key to deep transformation.
+                          </div>
+                        )}
+                        {selectedStatDetail === 'time' && (
+                          <div className="grid grid-cols-2 gap-4">
+                            <div className="bg-neutral-900/50 p-4 rounded-xl border border-neutral-800">
+                              <div className="text-[10px] uppercase tracking-widest text-neutral-500 mb-1">Avg Session</div>
+                              <div className="text-lg font-bold text-white">
+                                {totalSessions > 0 ? formatTotalTime(Math.floor(totalTime / totalSessions)) : '0m'}
+                              </div>
+                            </div>
+                            <div className="bg-neutral-900/50 p-4 rounded-xl border border-neutral-800">
+                              <div className="text-[10px] uppercase tracking-widest text-neutral-500 mb-1">Top Pattern</div>
+                              <div className="text-lg font-bold text-white truncate">
+                                {(() => {
+                                  const counts: Record<string, number> = {};
+                                  sessions.forEach(s => counts[s.pattern] = (counts[s.pattern] || 0) + 1);
+                                  const top = Object.entries(counts).sort((a, b) => b[1] - a[1])[0];
+                                  return top ? top[0] : 'None';
+                                })()}
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                        {selectedStatDetail === 'sessions' && (
+                          <div className="space-y-2">
+                            {(() => {
+                              const counts: Record<string, number> = {};
+                              sessions.forEach(s => counts[s.pattern] = (counts[s.pattern] || 0) + 1);
+                              return Object.entries(counts).sort((a, b) => b[1] - a[1]).map(([name, count]) => (
+                                <div key={name} className="flex justify-between items-center text-sm">
+                                  <span className="text-neutral-400">{name}</span>
+                                  <span className="text-white font-mono">{count}</span>
+                                </div>
+                              ));
+                            })()}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
 
               {/* Activity Section */}
-              <div className="bg-neutral-800/30 p-6 rounded-2xl border border-neutral-700/50 mb-8">
-                <h3 className="text-sm font-bold uppercase tracking-widest text-neutral-400 mb-6 flex items-center gap-2">
-                  <Trophy className="w-4 h-4 text-amber-400" />
-                  Achievements
-                </h3>
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {ACHIEVEMENTS.map((achievement) => {
-                    const isEarned = earnedAchievements.has(achievement.id);
-                    return (
-                      <div 
-                        key={achievement.id}
-                        className={`p-4 rounded-xl border transition-all ${
-                          isEarned 
-                            ? 'bg-neutral-900 border-neutral-700 opacity-100' 
-                            : 'bg-neutral-900/50 border-neutral-800/50 opacity-40 grayscale'
-                        }`}
-                      >
-                        <div className="flex items-start gap-3">
-                          <div className={`p-2 rounded-lg ${isEarned ? 'bg-amber-500/20 text-amber-400' : 'bg-neutral-800 text-neutral-600'}`}>
-                            {achievement.icon}
-                          </div>
-                          <div>
-                            <div className="text-xs font-bold text-white">{achievement.name}</div>
-                            <div className="text-[10px] text-neutral-500 mt-0.5">{achievement.description}</div>
-                            {isEarned && (
-                              <button 
-                                onClick={async () => {
-                                  let currentPubkey = pubkey;
-                                  if (!currentPubkey) {
-                                    currentPubkey = await loginWithNostr();
-                                    if (currentPubkey) setPubkey(currentPubkey);
-                                    else return;
-                                  }
-                                  setIsPosting(true);
-                                  await postAchievementToNostr(currentPubkey, achievement.name);
-                                  setIsPosting(false);
-                                  alert('Achievement shared!');
-                                }}
-                                className="mt-2 text-[9px] font-bold uppercase tracking-widest text-blue-400 hover:text-blue-300 transition-colors flex items-center gap-1"
-                              >
-                                <Share2 className="w-3 h-3" />
-                                Share
-                              </button>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-
               <div className="bg-neutral-800/30 p-6 rounded-2xl border border-neutral-700/50">
                 <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
                   <div>
@@ -1581,6 +1809,59 @@ export default function App() {
                   )}
                 </div>
               </div>
+
+              {/* Achievements Section */}
+              <div className="mt-8 bg-neutral-800/30 p-6 rounded-2xl border border-neutral-700/50">
+                <h3 className="text-sm font-bold uppercase tracking-widest text-neutral-400 mb-6 flex items-center gap-2">
+                  <Trophy className="w-4 h-4 text-amber-400" />
+                  Achievements
+                </h3>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  {ACHIEVEMENTS.map((achievement) => {
+                    const isEarned = earnedAchievements.has(achievement.id);
+                    return (
+                      <div 
+                        key={achievement.id}
+                        className={`p-4 rounded-xl border transition-all ${
+                          isEarned 
+                            ? 'bg-neutral-900 border-neutral-700 opacity-100' 
+                            : 'bg-neutral-900/50 border-neutral-800/50 opacity-40 grayscale'
+                        }`}
+                      >
+                        <div className="flex items-start gap-3">
+                          <div className={`p-2 rounded-lg ${isEarned ? 'bg-amber-500/20 text-amber-400' : 'bg-neutral-800 text-neutral-600'}`}>
+                            {achievement.icon}
+                          </div>
+                          <div>
+                            <div className="text-xs font-bold text-white">{achievement.name}</div>
+                            <div className="text-[10px] text-neutral-500 mt-0.5">{achievement.description}</div>
+                            {isEarned && (
+                              <button 
+                                onClick={async () => {
+                                  let currentPubkey = pubkey;
+                                  if (!currentPubkey) {
+                                    currentPubkey = await loginWithNostr();
+                                    if (currentPubkey) setPubkey(currentPubkey);
+                                    else return;
+                                  }
+                                  setIsPosting(true);
+                                  await postAchievementToNostr(currentPubkey, achievement.name);
+                                  setIsPosting(false);
+                                  alert('Achievement shared!');
+                                }}
+                                className="mt-2 text-[9px] font-bold uppercase tracking-widest text-blue-400 hover:text-blue-300 transition-colors flex items-center gap-1"
+                              >
+                                <Share2 className="w-3 h-3" />
+                                Share
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
             </motion.div>
           ) : showDurationSelector && pendingPattern ? (
             /* Duration Selection Modal */
@@ -1846,6 +2127,49 @@ export default function App() {
                   </div>
                 ))}
               </div>
+
+              {/* Recent Breathers List */}
+              <div className="mt-12 bg-neutral-900/30 rounded-3xl border border-neutral-800/50 overflow-hidden">
+                <div className="p-6 border-b border-neutral-800/50 flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <User className="w-4 h-4 text-blue-400" />
+                    <span className="text-sm font-bold uppercase tracking-widest text-neutral-400">Recent Breathers</span>
+                  </div>
+                  {isLoadingPublic && (
+                    <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                  )}
+                </div>
+                <div className="divide-y divide-neutral-800/50">
+                  {publicSessions.length > 0 ? (
+                    publicSessions.map((session, idx) => (
+                      <button
+                        key={session.id || idx}
+                        onClick={() => setProfileUser(session.pubkey)}
+                        className="w-full p-4 flex items-center justify-between hover:bg-white/5 transition-colors group text-left"
+                      >
+                        <div className="flex items-center gap-3">
+                          <div className="w-10 h-10 rounded-full bg-neutral-800 flex items-center justify-center text-neutral-400 group-hover:bg-neutral-700 transition-colors">
+                            <User className="w-5 h-5" />
+                          </div>
+                          <div>
+                            <div className="text-sm font-medium text-white">
+                              {session.pubkey.slice(0, 8)}...{session.pubkey.slice(-4)}
+                            </div>
+                            <div className="text-xs text-neutral-500">
+                              {Math.floor(session.duration / 60)}m session • {new Date(session.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                            </div>
+                          </div>
+                        </div>
+                        <ChevronRight className="w-5 h-5 text-neutral-600 group-hover:text-white transition-colors" />
+                      </button>
+                    ))
+                  ) : (
+                    <div className="p-8 text-center text-sm text-neutral-600 italic">
+                      No recent public sessions found
+                    </div>
+                  )}
+                </div>
+              </div>
             </motion.div>
           ) : isCompleted ? (
             /* Completion Summary */
@@ -2062,7 +2386,7 @@ export default function App() {
               <div className="flex justify-between items-center mb-8">
                 <div className="flex flex-col">
                   <h2 className="text-2xl font-display font-bold">Your Goals <span className="text-xs font-sans font-normal text-amber-500 ml-2 px-2 py-0.5 bg-amber-500/10 rounded-full">Beta</span></h2>
-                  <p className="text-[10px] text-neutral-500 font-medium">Data is stored locally in your browser</p>
+                  <p className="text-[10px] text-neutral-500 font-medium">Data is backed up to Nostr via #relaxyz</p>
                 </div>
                 <button onClick={() => setShowGoals(false)} className="text-neutral-500 hover:text-white">
                   <X className="w-6 h-6" />
@@ -2111,6 +2435,7 @@ export default function App() {
                             newEarned.add('week_planner');
                             setEarnedAchievements(newEarned);
                             localStorage.setItem('relaxyz_achievements', JSON.stringify(Array.from(newEarned)));
+                            setLastEarnedAchievement('week_planner');
                             setShowAchievement(true);
                           }
                         }}
@@ -2235,7 +2560,7 @@ export default function App() {
         </AnimatePresence>
         {/* Achievement Modal */}
         <AnimatePresence>
-          {showAchievement && (
+          {showAchievement && lastEarnedAchievement && (
             <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
@@ -2259,22 +2584,22 @@ export default function App() {
                   
                   <h2 className="text-2xl font-bold mb-2">Achievement Unlocked!</h2>
                   <p className="text-neutral-400 mb-6">
-                    You've successfully grown your first full tree. Your focus and dedication are blooming.
+                    {ACHIEVEMENTS.find(a => a.id === lastEarnedAchievement)?.description}
                   </p>
 
                   <div className="bg-neutral-800/50 rounded-2xl p-4 mb-8 border border-neutral-700 flex items-center gap-4 text-left">
-                    <div className="w-12 h-12 bg-green-500/20 rounded-xl flex items-center justify-center border border-green-500/30">
-                      <TreeDeciduous className="w-6 h-6 text-green-400" />
+                    <div className="w-12 h-12 bg-blue-500/20 rounded-xl flex items-center justify-center border border-blue-500/30 text-blue-400">
+                      {ACHIEVEMENTS.find(a => a.id === lastEarnedAchievement)?.icon}
                     </div>
                     <div>
                       <div className="text-xs font-bold text-blue-400 uppercase tracking-wider">Achievement</div>
-                      <div className="font-bold">First Tree Completed</div>
+                      <div className="font-bold">{ACHIEVEMENTS.find(a => a.id === lastEarnedAchievement)?.name}</div>
                     </div>
                   </div>
 
                   <div className="flex flex-col gap-3">
                     <button
-                      onClick={handleShareAchievement}
+                      onClick={() => handleShareAchievement(ACHIEVEMENTS.find(a => a.id === lastEarnedAchievement)?.name || "")}
                       disabled={isPosting}
                       className="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-4 rounded-2xl transition-all flex items-center justify-center gap-2 disabled:opacity-50"
                     >
@@ -2338,14 +2663,11 @@ export default function App() {
                       <span className="text-[10px] font-bold uppercase tracking-widest text-neutral-500">Total Time</span>
                     </div>
                     <div className="text-2xl font-display font-bold text-white">
-                      {(() => {
-                        // If it's the current user, we have accurate stats
-                        if (profileUser === pubkey) {
-                          const totalSecs = sessions.reduce((acc, s) => acc + s.duration, 0);
-                          return `${Math.floor(totalSecs / 60)}m`;
-                        }
-                        return '0m';
-                      })()}
+                      {profileData?.isLoading ? (
+                        <div className="w-6 h-6 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                      ) : (
+                        `${Math.floor((profileData?.sessions.reduce((acc, s) => acc + s.duration, 0) || 0) / 60)}m`
+                      )}
                     </div>
                   </div>
                   <div className="bg-neutral-800/50 p-4 rounded-2xl border border-neutral-800/50">
@@ -2354,7 +2676,11 @@ export default function App() {
                       <span className="text-[10px] font-bold uppercase tracking-widest text-neutral-500">Streak</span>
                     </div>
                     <div className="text-2xl font-display font-bold text-white">
-                      {profileUser === pubkey ? currentStreak : '?'}
+                      {profileData?.isLoading ? (
+                        <div className="w-6 h-6 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                      ) : (
+                        profileData?.streak || 0
+                      )}
                     </div>
                   </div>
                 </div>
@@ -2366,8 +2692,12 @@ export default function App() {
                     Achievements
                   </h3>
                   <div className="flex flex-wrap gap-2">
-                    {profileUser === pubkey ? (
-                      Array.from(earnedAchievements).map(id => {
+                    {profileData?.isLoading ? (
+                      <div className="w-full flex justify-center py-4">
+                        <div className="w-6 h-6 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                      </div>
+                    ) : profileData?.achievements && profileData.achievements.size > 0 ? (
+                      Array.from(profileData.achievements).map(id => {
                         const ach = ACHIEVEMENTS.find(a => a.id === id);
                         return ach ? (
                           <div key={id} className="p-2 bg-neutral-900 rounded-lg border border-neutral-800 text-amber-400" title={ach.name}>
@@ -2376,9 +2706,6 @@ export default function App() {
                         ) : null;
                       })
                     ) : (
-                      <div className="text-[10px] text-neutral-600 italic">Profile data restricted</div>
-                    )}
-                    {profileUser === pubkey && earnedAchievements.size === 0 && (
                       <div className="text-[10px] text-neutral-600 italic">No achievements yet</div>
                     )}
                   </div>
