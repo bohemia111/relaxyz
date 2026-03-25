@@ -320,7 +320,9 @@ const BreathingVisuals = ({ scale, elapsedSeconds, timeGoal, currentPhase }: {
 };
 
 export default function App() {
-  const [pubkey, setPubkey] = useState<string | null>(null);
+  const [pubkey, setPubkey] = useState<string | null>(() => {
+    return localStorage.getItem('relaxyz_pubkey');
+  });
   const [customPatterns, setCustomPatterns] = useState<BreathingPattern[]>([]);
   const [selectedPattern, setSelectedPattern] = useState<BreathingPattern | null>(null);
   const [isBreathing, setIsBreathing] = useState(false);
@@ -395,6 +397,22 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('relaxyz_sessions', JSON.stringify(sessions));
   }, [sessions]);
+
+  useEffect(() => {
+    if (pubkey) {
+      localStorage.setItem('relaxyz_pubkey', pubkey);
+      // Fetch profile if not already in nostrProfiles
+      if (!nostrProfiles[pubkey]) {
+        fetchNostrProfiles([pubkey]).then(profiles => {
+          if (profiles[pubkey]) {
+            setNostrProfiles(prev => ({ ...prev, ...profiles }));
+          }
+        });
+      }
+    } else {
+      localStorage.removeItem('relaxyz_pubkey');
+    }
+  }, [pubkey]);
 
   const calculateStreak = (userSessions: Session[]) => {
     if (userSessions.length === 0) return 0;
@@ -894,6 +912,13 @@ export default function App() {
     const key = await loginWithNostr();
     if (key) {
       setPubkey(key);
+      
+      // Fetch profile metadata for the user
+      const profiles = await fetchNostrProfiles([key]);
+      if (profiles[key]) {
+        setNostrProfiles(prev => ({ ...prev, ...profiles }));
+      }
+      
       // Restore history from Nostr
       const events = await fetchHistoryFromNostr(key);
       if (events.length > 0) {
@@ -1340,16 +1365,27 @@ export default function App() {
             <div className="flex items-center gap-3 bg-neutral-900 px-4 py-2 rounded-full border border-neutral-800">
               <button 
                 onClick={() => setProfileUser(pubkey)}
-                className="flex items-center gap-2 hover:text-blue-400 transition-colors"
+                className="flex items-center gap-2 hover:text-blue-400 transition-colors group"
               >
-                <User className="w-4 h-4 text-neutral-400" />
-                <span className="text-xs font-mono text-neutral-400">
-                  {pubkey.slice(0, 8)}...{pubkey.slice(-4)}
+                <div className="w-6 h-6 rounded-full bg-neutral-800 flex items-center justify-center text-neutral-400 group-hover:bg-neutral-700 transition-colors overflow-hidden">
+                  {nostrProfiles[pubkey]?.picture ? (
+                    <img 
+                      src={nostrProfiles[pubkey].picture} 
+                      alt="" 
+                      className="w-full h-full object-cover"
+                      referrerPolicy="no-referrer"
+                    />
+                  ) : (
+                    <User className="w-3 h-3" />
+                  )}
+                </div>
+                <span className="text-xs font-medium text-neutral-300 group-hover:text-blue-400 transition-colors">
+                  {nostrProfiles[pubkey]?.display_name || nostrProfiles[pubkey]?.name || getShortNpub(pubkey)}
                 </span>
               </button>
               <button 
                 onClick={handleLogout}
-                className="text-neutral-500 hover:text-white transition-colors"
+                className="text-neutral-500 hover:text-white transition-colors ml-1"
               >
                 <LogOut className="w-4 h-4" />
               </button>

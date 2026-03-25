@@ -23,7 +23,7 @@ async function startServer() {
     res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
     res.setHeader(
       "Content-Security-Policy",
-      "default-src 'self'; script-src 'self' 'unsafe-inline'; connect-src 'self' https://generativelanguage.googleapis.com wss://relay.damus.io wss://*.damus.io wss://*.nostr.com wss://*.nostr.band wss://nos.lol wss://relay.snort.social; img-src 'self' data: https:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com;"
+      "default-src 'self'; script-src 'self' 'unsafe-inline'; connect-src 'self' https://generativelanguage.googleapis.com wss://relaxy.nostr1.com wss://relay.damus.io wss://*.damus.io wss://*.nostr.com wss://*.nostr.band wss://nos.lol wss://relay.snort.social; img-src 'self' data: https:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com;"
     );
     next();
   });
@@ -38,7 +38,7 @@ async function startServer() {
   app.post("/api/nostr/post-session", async (req, res) => {
     const { sessionData, userPubkey } = req.body;
     const nsec = process.env.NOSTR_NSEC;
-    const relayUrl = process.env.PRIVATE_RELAY_URL || 'wss://relay.damus.io';
+    const relayUrl = 'wss://relaxy.nostr1.com';
 
     if (!userPubkey) {
       return res.status(400).json({ error: "User must be logged in to post session events" });

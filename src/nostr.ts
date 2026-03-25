@@ -34,7 +34,7 @@ export async function loginWithNostr(): Promise<string | null> {
 async function publishToRelays(signedEvent: any): Promise<boolean> {
   // Common relays to publish to
   const relays = [
-    'wss://teststr2.nostr1.com',
+    'wss://relaxy.nostr1.com',
     'wss://relay.damus.io', 
     'wss://nos.lol', 
     'wss://relay.nostr.band',
@@ -225,7 +225,7 @@ export async function postStatsToNostr(pubkey: string, stats: { totalTime: numbe
 }
 
 export async function fetchHistoryFromNostr(pubkey: string): Promise<any[]> {
-  const relay = 'wss://teststr2.nostr1.com';
+  const relay = 'wss://relaxy.nostr1.com';
   
   return new Promise((resolve) => {
     const socket = new WebSocket(relay);
@@ -300,7 +300,7 @@ export async function fetchHistoryFromNostr(pubkey: string): Promise<any[]> {
 }
 
 export async function fetchPublicSessions(): Promise<any[]> {
-  const relay = 'wss://teststr2.nostr1.com';
+  const relay = 'wss://relaxy.nostr1.com';
   
   return new Promise((resolve) => {
     const socket = new WebSocket(relay);
