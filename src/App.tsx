@@ -1228,7 +1228,7 @@ export default function App() {
                           <div>
                             <div className="text-sm font-medium text-white">{nostrProfiles[session.pubkey]?.display_name || nostrProfiles[session.pubkey]?.name || getShortNpub(session.pubkey)}</div>
                             <div className="text-xs text-neutral-500">
-                              {(() => { try { const d = session.content ? JSON.parse(session.content) : {}; return Math.floor((d.duration ?? 0) / 60); } catch { return 0; } })()}m session
+                              {(() => { const match = session.content?.match(/(\d+)m/); return match ? parseInt(match[1]) : 0; })()}m session
                               {' • '}
                               {new Date(session.created_at * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                             </div>
