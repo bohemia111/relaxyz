@@ -71,7 +71,7 @@ export default async function handler(req, res) {
       content: `🌬️ ${authorLabel} just completed a ${mins}m ${pattern} breathing session on relaxyz.com #relaxyz`,
     }, secretKey);
 
-    results.kind1 = await sendToRelay(kind1);
+    results.kind1 = await sendToRelay(secretKey, kind1);
     console.log('[api/nostr] kind 1 sent:', results.kind1);
   } catch (e) {
     console.error('[api/nostr] kind 1 failed:', e.message);
@@ -93,7 +93,7 @@ export default async function handler(req, res) {
         content: JSON.stringify(state),
       }, secretKey);
 
-      results.kind30001 = await sendToRelay(kind30001);
+      results.kind30001 = await sendToRelay(secretKey, kind30001);
       console.log('[api/nostr] kind 30001 sent:', results.kind30001);
     } catch (e) {
       console.error('[api/nostr] kind 30001 failed:', e.message);
