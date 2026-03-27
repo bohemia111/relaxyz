@@ -16,7 +16,7 @@ Choose from six preset breathing patterns or create your own, choose one of four
 
 ## Login
 
-Login is optional. Connect a NIP-07 browser extension (Alby, nos2x) to sync your data across devices and appear in the Recent Breathers feed.
+Login is optional. Connect a NIP-07 browser extension (Alby, nos2x) to sync your data across devices and appear in the Recent Breathers feed using Relaxy's private AUTH protected backup relay.
 
 Without a login, sessions are saved locally in your browser.
 
