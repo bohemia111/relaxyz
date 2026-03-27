@@ -2,7 +2,7 @@
 
 A breathing app built on Nostr.
 
-Choose from six preset breathing patterns or create your own, choose one of four soundscapes based on a mix of brown and pink noise or choose silence, set a duration, and breathe. Your sessions, streaks, and achievements are backed up to a private Nostr relay and restored automatically when you log in with your Nostr extension (beta feature, also stored locally).
+Choose from six preset breathing patterns or create your own, choose one of four soundscapes or silence, set a duration, and breathe. Your sessions, streaks, and achievements are backed up to a private Nostr relay and restored automatically when you log in with your Nostr extension (beta feature, also stored locally).
 
 ## Features
 
