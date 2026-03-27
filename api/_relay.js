@@ -125,8 +125,8 @@ export function sendToRelay(secretKey, event) {
     });
 
     ws.on('open', () => {
-      console.log('[relay] connected, sending EVENT kind:', event.kind);
-      ws.send(JSON.stringify(['EVENT', event]));
+      // Wait for AUTH challenge before sending anything
+      console.log('[relay] connected, waiting for AUTH challenge...');
     });
 
     ws.on('message', (data) => {
@@ -135,8 +135,9 @@ export function sendToRelay(secretKey, event) {
         console.log('[relay] message:', JSON.stringify(msg));
         if (!Array.isArray(msg)) return;
 
+        // Step 1: Relay sends AUTH challenge — sign and respond
         if (msg[0] === 'AUTH' && typeof msg[1] === 'string' && !authed) {
-          console.log('[relay] AUTH challenge, signing and re-sending...');
+          console.log('[relay] AUTH challenge received, signing...');
           authed = true;
           const authEvent = finalizeEvent({
             kind: 22242,
@@ -145,11 +146,18 @@ export function sendToRelay(secretKey, event) {
             content: '',
           }, secretKey);
           ws.send(JSON.stringify(['AUTH', authEvent]));
+          // Do NOT send the EVENT yet — wait for AUTH OK
+        }
+
+        // Step 2: AUTH accepted — now send the EVENT
+        if (msg[0] === 'OK' && authed && msg[2] === true && msg[1] !== event.id) {
+          console.log('[relay] AUTH accepted, sending EVENT kind:', event.kind);
           ws.send(JSON.stringify(['EVENT', event]));
         }
 
+        // Step 3: EVENT accepted or rejected
         if (msg[0] === 'OK' && msg[1] === event.id) {
-          console.log('[relay] OK:', msg[2], msg[3] ?? '');
+          console.log('[relay] EVENT OK:', msg[2], msg[3] ?? '');
           clearTimeout(timer);
           ws.close();
           finish(msg[2] === true);
@@ -191,8 +199,8 @@ export function fetchFromRelay(secretKey, filter) {
       });
 
       ws.on('open', () => {
-        // Send REQ immediately — relay will send AUTH challenge if needed
-        ws.send(JSON.stringify(['REQ', subId, filter]));
+        // Wait for AUTH challenge before sending REQ
+        console.log('[relay] fetch connected, waiting for AUTH...');
       });
 
       ws.on('message', (data) => {
@@ -200,7 +208,7 @@ export function fetchFromRelay(secretKey, filter) {
           const msg = JSON.parse(data.toString());
           if (!Array.isArray(msg)) return;
 
-          // NIP-42 AUTH challenge
+          // Step 1: AUTH challenge — sign and respond
           if (msg[0] === 'AUTH' && typeof msg[1] === 'string' && !authed) {
             const authEvent = finalizeEvent({
               kind: 22242,
@@ -214,9 +222,10 @@ export function fetchFromRelay(secretKey, filter) {
             ws.send(JSON.stringify(['AUTH', authEvent]));
           }
 
-          // AUTH accepted — re-send the REQ now that we're authenticated
+          // Step 2: AUTH accepted — now send the REQ
           if (msg[0] === 'OK' && msg[2] === true && !authed) {
             authed = true;
+            console.log('[relay] fetch AUTH accepted, sending REQ...');
             ws.send(JSON.stringify(['REQ', subId, filter]));
           }
 
