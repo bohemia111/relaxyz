@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <!-- Dark background matching app's neutral-950 -->
+  <rect width="32" height="32" rx="8" fill="#0a0a0a"/>
+  <!-- Wind icon in blue-400 matching the app header -->
+  <g stroke="#60a5fa" stroke-width="2" stroke-linecap="round" fill="none">
+    <!-- Top wind line -->
+    <path d="M6 11 Q14 11 16 9 Q18 7 16 5 Q14 3 12 5"/>
+    <!-- Middle wind line (longest) -->
+    <path d="M6 16 Q18 16 22 14 Q26 12 24 9 Q22 6 19 8"/>
+    <!-- Bottom wind line -->
+    <path d="M6 21 Q14 21 18 23 Q22 25 20 28 Q18 30 15 28"/>
+  </g>
+</svg>

@@ -111,8 +111,8 @@ export function sendToRelay(secretKey, event) {
     };
 
     const timer = setTimeout(() => {
-      console.warn('[relay] send timeout');
-      ws.close();
+      console.warn('[relay] send timeout — no OK within', RELAY_TIMEOUT_MS, 'ms');
+      ws?.close();
       finish(false);
     }, RELAY_TIMEOUT_MS);
 
@@ -125,44 +125,42 @@ export function sendToRelay(secretKey, event) {
     });
 
     ws.on('open', () => {
-      // Send the EVENT immediately — relay will challenge us if auth is required
+      console.log('[relay] connected, sending EVENT kind:', event.kind);
       ws.send(JSON.stringify(['EVENT', event]));
     });
 
     ws.on('message', (data) => {
       try {
         const msg = JSON.parse(data.toString());
+        console.log('[relay] message:', JSON.stringify(msg));
         if (!Array.isArray(msg)) return;
 
-        // NIP-42: relay sent an AUTH challenge
         if (msg[0] === 'AUTH' && typeof msg[1] === 'string' && !authed) {
+          console.log('[relay] AUTH challenge, signing and re-sending...');
           authed = true;
           const authEvent = finalizeEvent({
             kind: 22242,
             created_at: Math.floor(Date.now() / 1000),
-            tags: [
-              ['relay', PRIVATE_RELAY],
-              ['challenge', msg[1]],
-            ],
+            tags: [['relay', PRIVATE_RELAY], ['challenge', msg[1]]],
             content: '',
           }, secretKey);
           ws.send(JSON.stringify(['AUTH', authEvent]));
-          // Re-send the event after authenticating
           ws.send(JSON.stringify(['EVENT', event]));
         }
 
-        // Relay confirmed event accepted or rejected
         if (msg[0] === 'OK' && msg[1] === event.id) {
+          console.log('[relay] OK:', msg[2], msg[3] ?? '');
           clearTimeout(timer);
           ws.close();
           finish(msg[2] === true);
         }
 
-        // Relay closed the connection (e.g. auth-required before we authed)
         if (msg[0] === 'CLOSED') {
-          console.warn('[relay] connection closed by relay:', msg[2]);
+          console.warn('[relay] CLOSED:', msg[2]);
         }
-      } catch { /* ignore */ }
+      } catch (e) {
+        console.error('[relay] parse error:', e.message);
+      }
     });
   });
 }
