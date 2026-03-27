@@ -17,75 +17,8 @@
  * }
  */
 
-import { finalizeEvent, getPublicKey } from 'nostr-tools/pure';
-import { nip19 } from 'nostr-tools';
-import WebSocket from 'ws';
-
-const PRIVATE_RELAY = 'wss://relaxy.nostr1.com';
-const RELAY_TIMEOUT_MS = 6000;
-
-// ─── Load secret key from environment ────────────────────────────────────────
-
-function loadSecretKey() {
-  const raw = process.env.NOSTR_NSEC;
-  if (!raw) throw new Error('NOSTR_NSEC environment variable is not set');
-
-  if (raw.startsWith('nsec1')) {
-    const decoded = nip19.decode(raw);
-    if (decoded.type !== 'nsec') throw new Error('NOSTR_NSEC is not a valid nsec bech32');
-    return decoded.data; // Uint8Array
-  }
-
-  // Raw 64-char hex
-  if (!/^[0-9a-fA-F]{64}$/.test(raw)) {
-    throw new Error('NOSTR_NSEC must be nsec1… bech32 or 64-char hex');
-  }
-  return Uint8Array.from(Buffer.from(raw, 'hex'));
-}
-
-// ─── Send a signed event to the private relay ─────────────────────────────────
-
-function sendToRelay(event) {
-  return new Promise((resolve) => {
-    let settled = false;
-    const finish = (result) => {
-      if (settled) return;
-      settled = true;
-      resolve(result);
-    };
-
-    const timer = setTimeout(() => {
-      console.warn('[api/nostr] relay timeout');
-      finish(false);
-    }, RELAY_TIMEOUT_MS);
-
-    const ws = new WebSocket(PRIVATE_RELAY);
-
-    ws.on('error', (err) => {
-      console.error('[api/nostr] WebSocket error:', err.message);
-      clearTimeout(timer);
-      finish(false);
-    });
-
-    ws.on('open', () => {
-      ws.send(JSON.stringify(['EVENT', event]));
-    });
-
-    ws.on('message', (data) => {
-      try {
-        const msg = JSON.parse(data.toString());
-        // Relay sends ["OK", event_id, true/false, message]
-        if (Array.isArray(msg) && msg[0] === 'OK') {
-          clearTimeout(timer);
-          ws.close();
-          finish(msg[2] === true);
-        }
-      } catch {
-        // ignore malformed relay messages
-      }
-    });
-  });
-}
+import { finalizeEvent } from 'nostr-tools/pure';
+import { loadSecretKey, sendToRelay } from './_relay.js';
 
 // ─── Anonymous display name ───────────────────────────────────────────────────
 

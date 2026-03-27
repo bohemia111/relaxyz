@@ -259,117 +259,36 @@ export async function postSessionToServerNostr(
 // ─── Fetch private history ────────────────────────────────────────────────
 
 export async function fetchHistoryFromNostr(pubkey: string): Promise<PrivateState | null> {
-  return new Promise((resolve) => {
-    let ws: WebSocket | null = null;
-    let result: PrivateState | null = null;
-    const timeout = setTimeout(() => {
-      ws?.close();
-      resolve(result);
-    }, RELAY_TIMEOUT_MS * 2);
-
-    try {
-      ws = new WebSocket(PRIVATE_RELAY);
-
-      ws.onerror = (err) => {
-        console.warn('[nostr] fetchHistoryFromNostr relay error:', err);
-        clearTimeout(timeout);
-        ws?.close();
-        resolve(null);
-      };
-
-      ws.onopen = () => {
-        ws!.send(
-          JSON.stringify([
-            'REQ',
-            'state',
-            {
-              kinds: [30001],
-              '#d': [`user_state_${pubkey}`],
-              '#t': ['relaxy'],
-              limit: 1,
-            },
-          ])
-        );
-      };
-
-      ws.onmessage = (msg) => {
-        const data = safeParseRelayMessage(msg.data as string);
-        if (!data) return;
-
-        if (data[0] === 'EVENT' && data[2]) {
-          const event = data[2] as NostrEvent;
-          try {
-            result = JSON.parse(event.content) as PrivateState;
-          } catch {
-            console.warn('[nostr] Failed to parse private state content');
-          }
-        }
-        if (data[0] === 'EOSE') {
-          clearTimeout(timeout);
-          ws?.close();
-          resolve(result);
-        }
-      };
-    } catch (e) {
-      console.error('[nostr] fetchHistoryFromNostr error:', e);
-      clearTimeout(timeout);
-      resolve(null);
+  try {
+    const res = await fetch(`/api/fetch-history?pubkey=${pubkey}`);
+    if (!res.ok) {
+      console.warn('[nostr] fetchHistoryFromNostr API error:', res.status);
+      return null;
     }
-  });
+    const data = await res.json();
+    // Empty object means no history found
+    if (!data || Object.keys(data).length === 0) return null;
+    return data as PrivateState;
+  } catch (e) {
+    console.error('[nostr] fetchHistoryFromNostr failed:', e);
+    return null;
+  }
 }
 
 // ─── Fetch public sessions ────────────────────────────────────────────────
 
 export async function fetchPublicSessions(): Promise<NostrEvent[]> {
-  // Fetch recent session posts from the private relay using the #relaxy tag
-  return new Promise<NostrEvent[]>((resolve) => {
-    const events: NostrEvent[] = [];
-    let ws: WebSocket | null = null;
-    const timeout = setTimeout(() => {
-      ws?.close();
-      resolve(dedupeEvents(events));
-    }, RELAY_TIMEOUT_MS * 2);
-
-    try {
-      ws = new WebSocket(PRIVATE_RELAY);
-
-      ws.onerror = () => {
-        clearTimeout(timeout);
-        ws?.close();
-        resolve(dedupeEvents(events));
-      };
-
-      ws.onopen = () => {
-        ws!.send(
-          JSON.stringify([
-            'REQ',
-            'feed',
-            {
-              kinds: [1],
-              '#t': ['relaxy'],
-              limit: 10,
-            },
-          ])
-        );
-      };
-
-      ws.onmessage = (msg) => {
-        const data = safeParseRelayMessage(msg.data as string);
-        if (!data) return;
-        if (data[0] === 'EVENT' && data[2]) {
-          events.push(data[2] as NostrEvent);
-        }
-        if (data[0] === 'EOSE') {
-          clearTimeout(timeout);
-          ws?.close();
-          resolve(dedupeEvents(events));
-        }
-      };
-    } catch {
-      clearTimeout(timeout);
-      resolve([]);
+  try {
+    const res = await fetch('/api/fetch-feed');
+    if (!res.ok) {
+      console.warn('[nostr] fetchPublicSessions API error:', res.status);
+      return [];
     }
-  });
+    return await res.json() as NostrEvent[];
+  } catch (e) {
+    console.error('[nostr] fetchPublicSessions failed:', e);
+    return [];
+  }
 }
 
 // ─── Fetch Nostr profiles ─────────────────────────────────────────────────
