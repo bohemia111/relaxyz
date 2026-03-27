@@ -139,6 +139,8 @@ export async function postSessionToNostr(
       tags: [['t', 'relaxyz']],
       content: `🌬️ I just completed a ${Math.floor(data.duration / 60)}m ${data.pattern} breathing session on Relaxyz.com #relaxyz #breathwork`,
     });
+    // Post to public relays only for social sharing.
+    // The private relay is written to server-side via /api/nostr.
     const results = await Promise.all(PUBLIC_RELAYS.map((url) => sendEventToRelay(event, url)));
     return results.some(Boolean);
   } catch (e) {
@@ -222,28 +224,32 @@ export async function postStatsToNostr(
   }
 }
 
-// ─── Private state backup (kind 30001) ───────────────────────────────────
+// ─── Mirror session to private relay via server API ─────────────────────────
+// The API route (/api/nostr) signs with NOSTR_NSEC server-side and posts
+// both a kind 1 (for Recent Breathers) and kind 30001 (full state backup).
 
 export async function postSessionToServerNostr(
   state: PrivateState,
-  pubkey: string
+  pubkey: string | null,
+  sessionData: { pattern: string; duration: number }
 ): Promise<{ success: boolean; error?: string }> {
-  if (!window.nostr) return { success: false, error: 'No NIP-07 extension' };
   try {
-    const event = await window.nostr.signEvent({
-      kind: 30001,
-      pubkey,
-      created_at: Math.floor(Date.now() / 1000),
-      tags: [
-        ['d', 'user_state'],
-        ['t', 'relaxyz'],
-      ],
-      // Note: this is stored in plaintext on the relay.
-      // For true privacy, encrypt with NIP-44 before deploying to production.
-      content: JSON.stringify(state),
+    const res = await fetch('/api/nostr', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        pubkey,
+        pattern: sessionData.pattern,
+        duration: sessionData.duration,
+        state: pubkey ? state : undefined,
+      }),
     });
-    const ok = await sendEventToRelay(event, PRIVATE_RELAY);
-    return { success: ok };
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: 'Unknown error' }));
+      return { success: false, error: err.error };
+    }
+    const data = await res.json();
+    return { success: data.success };
   } catch (e) {
     console.error('[nostr] postSessionToServerNostr failed:', e);
     return { success: false, error: String(e) };
@@ -278,9 +284,8 @@ export async function fetchHistoryFromNostr(pubkey: string): Promise<PrivateStat
             'state',
             {
               kinds: [30001],
-              authors: [pubkey],
-              '#d': ['user_state'],
-              '#t': ['relaxyz'],
+              '#d': [`user_state_${pubkey}`],
+              '#t': ['relaxy'],
               limit: 1,
             },
           ])
@@ -316,61 +321,55 @@ export async function fetchHistoryFromNostr(pubkey: string): Promise<PrivateStat
 // ─── Fetch public sessions ────────────────────────────────────────────────
 
 export async function fetchPublicSessions(): Promise<NostrEvent[]> {
-  const events: NostrEvent[] = [];
+  // Fetch recent session posts from the private relay using the #relaxy tag
+  return new Promise<NostrEvent[]>((resolve) => {
+    const events: NostrEvent[] = [];
+    let ws: WebSocket | null = null;
+    const timeout = setTimeout(() => {
+      ws?.close();
+      resolve(dedupeEvents(events));
+    }, RELAY_TIMEOUT_MS * 2);
 
-  await Promise.allSettled(
-    PUBLIC_RELAYS.map(
-      (url) =>
-        new Promise<void>((resolve) => {
-          let ws: WebSocket | null = null;
-          const timeout = setTimeout(() => {
-            ws?.close();
-            resolve();
-          }, RELAY_TIMEOUT_MS);
+    try {
+      ws = new WebSocket(PRIVATE_RELAY);
 
-          try {
-            ws = new WebSocket(url);
+      ws.onerror = () => {
+        clearTimeout(timeout);
+        ws?.close();
+        resolve(dedupeEvents(events));
+      };
 
-            ws.onerror = () => {
-              clearTimeout(timeout);
-              ws?.close();
-              resolve();
-            };
+      ws.onopen = () => {
+        ws!.send(
+          JSON.stringify([
+            'REQ',
+            'feed',
+            {
+              kinds: [1],
+              '#t': ['relaxy'],
+              limit: 10,
+            },
+          ])
+        );
+      };
 
-            ws.onopen = () => {
-              ws!.send(
-                JSON.stringify([
-                  'REQ',
-                  'pub',
-                  {
-                    '#t': ['relaxyz'],
-                    limit: 50,
-                  },
-                ])
-              );
-            };
-
-            ws.onmessage = (msg) => {
-              const data = safeParseRelayMessage(msg.data as string);
-              if (!data) return;
-              if (data[0] === 'EVENT' && data[2]) {
-                events.push(data[2] as NostrEvent);
-              }
-              if (data[0] === 'EOSE') {
-                clearTimeout(timeout);
-                ws?.close();
-                resolve();
-              }
-            };
-          } catch {
-            clearTimeout(timeout);
-            resolve();
-          }
-        })
-    )
-  );
-
-  return dedupeEvents(events);
+      ws.onmessage = (msg) => {
+        const data = safeParseRelayMessage(msg.data as string);
+        if (!data) return;
+        if (data[0] === 'EVENT' && data[2]) {
+          events.push(data[2] as NostrEvent);
+        }
+        if (data[0] === 'EOSE') {
+          clearTimeout(timeout);
+          ws?.close();
+          resolve(dedupeEvents(events));
+        }
+      };
+    } catch {
+      clearTimeout(timeout);
+      resolve([]);
+    }
+  });
 }
 
 // ─── Fetch Nostr profiles ─────────────────────────────────────────────────

@@ -776,11 +776,20 @@ export default function App() {
 
     setEarnedAchievements(newEarned);
 
-    if (pubkey) {
-      if (lastEarnedAchievement) postAchievementToNostr(pubkey, lastEarnedAchievement).catch(console.error);
-      postSessionToServerNostr({ sessions: updatedSessions, earnedAchievements: Array.from(newEarned) as string[], customPatterns }, pubkey)
-        .then((res) => { if (!res.success) console.warn('[App] Server Nostr sync failed:', res.error); })
-        .catch(console.error);
+    // Mirror to private relay via /api/nostr (works for both logged-in and anonymous users)
+    if (selectedPattern && sessionStartTime) {
+      const duration = Math.floor((Date.now() - sessionStartTime) / 1000);
+      postSessionToServerNostr(
+        { sessions: updatedSessions, earnedAchievements: Array.from(newEarned) as string[], customPatterns },
+        pubkey,
+        { pattern: selectedPattern.name, duration }
+      ).then((res) => {
+        if (!res.success) console.warn('[App] Server Nostr sync failed:', res.error);
+      }).catch(console.error);
+    }
+
+    if (pubkey && lastEarnedAchievement) {
+      postAchievementToNostr(pubkey, lastEarnedAchievement).catch(console.error);
     }
 
     confetti({ particleCount: 100, spread: 70, origin: { y: 0.6 }, colors: ['#60a5fa', '#34d399', '#818cf8'] });
@@ -1228,7 +1237,13 @@ export default function App() {
                           <div>
                             <div className="text-sm font-medium text-white">{nostrProfiles[session.pubkey]?.display_name || nostrProfiles[session.pubkey]?.name || getShortNpub(session.pubkey)}</div>
                             <div className="text-xs text-neutral-500">
-                              {(() => { const match = session.content?.match(/(\d+)m/); return match ? parseInt(match[1]) : 0; })()}m session
+                              {(() => {
+                                const mins = session.content?.match(/(\d+)m/);
+                                const pattern = session.content?.match(/(\d+)m (.+?) breathing/);
+                                const minsStr = mins ? `${parseInt(mins[1])}m` : '?m';
+                                const patternStr = pattern ? pattern[2] : 'session';
+                                return `${minsStr} ${patternStr}`;
+                              })()}
                               {' • '}
                               {new Date(session.created_at * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                             </div>
