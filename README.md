@@ -2,13 +2,13 @@
 
 A breathing app built on Nostr.
 
-Choose a breathing pattern, set a duration, and breathe. Your sessions, streaks, and achievements are backed up to a private Nostr relay and restored automatically when you log in with your Nostr extension.
+Choose from six preset breathing patterns or create your own, choose one of four soundscapes based on a mix of brown and pink noise or choose silence, set a duration, and breathe. Your sessions, streaks, and achievements are backed up to a private Nostr relay and restored automatically when you log in with your Nostr extension (beta feature, also stored locally).
 
 ## Features
 
-- Six guided breathing patterns (Box Breathing, 4-7-8, Heart Coherence, and more)
+- Six guided breathing patterns (Box Breathing, 4-7-8, Heart Coherence, Calm Breath, Wake Up, and Stamina)
 - Custom pattern builder
-- Background soundscapes (forest, ocean, rain, wind)
+- Background soundscapes (forest, ocean, rain, wind - a mix of brown and pink noise)
 - Session tracking with streaks, stats, and achievements
 - Visual breathing guide — minimalist or animated cat + cherry blossom tree
 - Social sharing to Nostr
@@ -31,4 +31,4 @@ Without a login, sessions are saved locally in your browser.
 
 - [relaxyz.com](https://relaxyz.com)
 - [GitHub](https://github.com/bohemia111/relaxyz)
-- [Nostr](https://njump.me/nprofile1qqsymsh9wrz5lmurz0arqn6jjaqyfmtvz2z3qpfxqz5msnvr0wqjd7gprdmhxue69uhhg6r9vehhyetnwshxummnw3erztnrdakj7qgcwaehxw309aehqct5d9sj6ctjvdskucfwvdhk6tcpkvxva)
+- [Bohemia on Nostr](https://njump.me/nprofile1qqsymsh9wrz5lmurz0arqn6jjaqyfmtvz2z3qpfxqz5msnvr0wqjd7gprdmhxue69uhhg6r9vehhyetnwshxummnw3erztnrdakj7qgcwaehxw309aehqct5d9sj6ctjvdskucfwvdhk6tcpkvxva)
